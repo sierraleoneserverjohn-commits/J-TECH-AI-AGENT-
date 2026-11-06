@@ -13,6 +13,9 @@ interface HolographicGlobeProps {
   activeProviderUsage?: ActiveProviderUsage | null;
   audioLevel?: number;
   isListening?: boolean;
+  sessionDuration?: number;
+  selectedVoice?: string;
+  provider?: string;
   onMicClick?: () => void;
   onOpenCommandPalette?: () => void;
   width?: number;
@@ -47,6 +50,9 @@ export const HolographicGlobe: React.FC<HolographicGlobeProps> = ({
   activeProviderUsage = null,
   audioLevel = 0,
   isListening = false,
+  sessionDuration = 0,
+  selectedVoice = 'Zephyr',
+  provider = 'Gemini Live',
   onMicClick,
   onOpenCommandPalette,
   width = 360,
@@ -646,7 +652,7 @@ export const HolographicGlobe: React.FC<HolographicGlobeProps> = ({
           JEXA AI CORE
         </span>
 
-        {/* State name under the core label */}
+        {/* State name and Live voice session timer under the core label */}
         <div className="mt-1 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-500/35 text-[9px] font-mono text-cyan-300 shadow-[0_0_8px_rgba(0,240,255,0.2)]">
           <span
             className={`w-1.5 h-1.5 rounded-full ${
@@ -658,6 +664,11 @@ export const HolographicGlobe: React.FC<HolographicGlobeProps> = ({
             }`}
           />
           <span className="uppercase tracking-wider">{stateLabels[state]}</span>
+          {isListening && (
+            <span className="ml-1 pl-1.5 border-l border-cyan-500/40 text-[8.5px] text-emerald-300">
+              {selectedVoice} • {Math.floor(sessionDuration / 60).toString().padStart(2, '0')}:{(sessionDuration % 60).toString().padStart(2, '0')}
+            </span>
+          )}
         </div>
 
         {/* EXTRA FEATURE 1: Live Reasoning Line */}

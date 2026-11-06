@@ -18,6 +18,7 @@ import { FullLogModal } from './components/FullLogModal';
 import { EdgeDrawerHandle } from './components/EdgeDrawerHandle';
 import { CommandPaletteModal } from './components/CommandPaletteModal';
 import { AmbientModeOverlay } from './components/AmbientModeOverlay';
+import { VisionPanelModal } from './components/VisionPanelModal';
 import { getSavedTheme, applyTheme } from './utils/theme';
 import { Eye, EyeOff } from 'lucide-react';
 
@@ -82,6 +83,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isFullLogsOpen, setIsFullLogsOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isVisionOpen, setIsVisionOpen] = useState<boolean>(false);
   const [allowPortraitPreview, setAllowPortraitPreview] = useState<boolean>(false);
 
   // Ambient Mode: 60 seconds idle detection
@@ -250,6 +252,7 @@ export default function App() {
               setActiveModel={setActiveModel}
               collapsedPanels={collapsedPanels}
               toggleCollapse={togglePanelCollapse}
+              onOpenVision={() => setIsVisionOpen(true)}
             />
           </div>
         </div>
@@ -277,6 +280,9 @@ export default function App() {
               activeProviderUsage={activeProviderUsage}
               audioLevel={voice.audioLevel}
               isListening={voice.isListening}
+              sessionDuration={voice.sessionDuration}
+              selectedVoice={voice.selectedVoice}
+              provider={voice.activeProvider}
               onMicClick={voice.toggleListening}
               onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
             />
@@ -332,6 +338,12 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onBackendUpdated={refreshBackendStatus}
+      />
+
+      {/* Vision Studio Modal */}
+      <VisionPanelModal
+        isOpen={isVisionOpen}
+        onClose={() => setIsVisionOpen(false)}
       />
 
       {/* Command Palette Modal (Triggered by long-press on mic button) */}

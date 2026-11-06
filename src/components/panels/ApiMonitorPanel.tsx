@@ -56,41 +56,50 @@ export const ApiMonitorPanel: React.FC<ApiMonitorPanelProps> = ({ providers }) =
           return (
             <div
               key={p.name}
-              className="p-1.5 rounded bg-[#0b1422]/70 border border-slate-800/80 flex items-center justify-between"
+              className="p-1.5 rounded bg-[#0b1422]/70 border border-slate-800/80 flex flex-col gap-1"
             >
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    isError
-                      ? 'bg-rose-500'
-                      : isConnected
-                      ? 'bg-emerald-400'
-                      : 'bg-slate-600'
-                  }`}
-                />
-                <span className="font-semibold text-slate-200 text-[11px]">{p.name}</span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isError
+                        ? 'bg-rose-500 animate-pulse'
+                        : isConnected
+                        ? 'bg-emerald-400'
+                        : 'bg-slate-600'
+                    }`}
+                  />
+                  <span className="font-semibold text-slate-200 text-[11px]">{p.name}</span>
+                </div>
+
+                <div className="flex items-center gap-2 text-[10px]">
+                  {p.latencyMs !== null && isConnected ? (
+                    <span className="text-cyan-400 flex items-center gap-0.5">
+                      <Clock className="w-2.5 h-2.5" />
+                      {p.latencyMs}ms
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">
+                      {isConnected ? 'Connected' : isError ? 'Error' : 'Not configured'}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => testProvider(p.name)}
+                    disabled={refreshing === p.name}
+                    aria-label={`Ping ${p.name}`}
+                    className="p-1 text-slate-400 hover:text-cyan-300 rounded"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${refreshing === p.name ? 'animate-spin text-cyan-400' : ''}`} />
+                  </button>
+                </div>
               </div>
 
-              <div className="flex items-center gap-2 text-[10px]">
-                {p.latencyMs !== null && isConnected ? (
-                  <span className="text-cyan-400 flex items-center gap-0.5">
-                    <Clock className="w-2.5 h-2.5" />
-                    {p.latencyMs}ms
-                  </span>
-                ) : (
-                  <span className="text-slate-500">
-                    {isConnected ? 'Connected' : 'Not configured'}
-                  </span>
-                )}
-                <button
-                  onClick={() => testProvider(p.name)}
-                  disabled={refreshing === p.name}
-                  aria-label={`Ping ${p.name}`}
-                  className="p-1 text-slate-400 hover:text-cyan-300 rounded"
-                >
-                  <RefreshCw className={`w-3 h-3 ${refreshing === p.name ? 'animate-spin text-cyan-400' : ''}`} />
-                </button>
-              </div>
+              {isError && (
+                <div className="flex items-center gap-1 text-[9px] text-rose-300 bg-rose-950/40 p-1 rounded border border-rose-900/50">
+                  <AlertCircle className="w-2.5 h-2.5 text-rose-400 shrink-0" />
+                  <span className="truncate">{p.lastError || 'Live connection or quota issue'}</span>
+                </div>
+              )}
             </div>
           );
         })}

@@ -353,18 +353,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, o
             </div>
           </div>
 
-          {/* 5. Voice & Wake Word */}
-          <div className="p-2.5 rounded-lg bg-[#050b16] border border-slate-800 space-y-1.5 text-slate-300 text-[10px]">
-            <span className="font-semibold text-slate-200 block text-xs">Voice & Wake Word</span>
-            <div className="flex items-center justify-between py-0.5">
-              <span className="text-slate-400">Wake word: "Hey Jexa"</span>
-              <span className="px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-500/30 text-[8.5px] text-cyan-300">
-                Wake word: coming with Android app
-              </span>
+          {/* 5. Voice & Gemini Live Configuration */}
+          <div className="p-2.5 rounded-lg bg-[#050b16] border border-slate-800 space-y-2 text-slate-300 text-[10px]">
+            <span className="font-semibold text-slate-200 block text-xs">Voice & Gemini Live Engine</span>
+            
+            <div>
+              <label className="text-[9.5px] uppercase tracking-wider text-slate-400 block mb-1">
+                Gemini Live Voice Profile
+              </label>
+              <div className="grid grid-cols-5 gap-1">
+                {(['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir'] as const).map((voiceName) => {
+                  const currentVoice = localStorage.getItem('jexa_live_voice') || 'Zephyr';
+                  const isSelected = currentVoice === voiceName;
+                  return (
+                    <button
+                      key={voiceName}
+                      type="button"
+                      onClick={() => {
+                        localStorage.setItem('jexa_live_voice', voiceName);
+                        // Force state refresh
+                        setBrain((b) => b);
+                      }}
+                      className={`py-1 px-1 rounded border text-center transition-all ${
+                        isSelected
+                          ? 'border-cyan-400 bg-cyan-950/70 text-cyan-200 font-bold shadow-[0_0_8px_rgba(0,240,255,0.3)]'
+                          : 'border-slate-800 bg-[#030712] text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <span className="block text-[9px] truncate">{voiceName}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+
+            <div className="flex items-center justify-between py-0.5 border-t border-slate-800/60 pt-1.5">
+              <span className="text-slate-400">Speech streaming</span>
+              <span className="text-cyan-300 font-mono text-[9px]">16kHz In • 24kHz Out</span>
+            </div>
+
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Speech mode</span>
-              <span className="text-emerald-400 font-semibold">Web Speech API</span>
+              <span className="text-slate-400">Wake word</span>
+              <span className="px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-500/30 text-[8.5px] text-cyan-300">
+                Coming with Android app
+              </span>
             </div>
           </div>
         </div>

@@ -29,6 +29,31 @@ export class GeminiBrain implements BrainClient {
     const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
     const accessToken = localStorage.getItem('jexa_access_token') || '';
 
+    // Check if command is a direct tool directive (e.g. "search ...", "browse ...", "execute tool: ...")
+    const lower = trimmed.toLowerCase();
+    const { toolRegistry } = await import('../tools');
+
+    if (lower.startsWith('search ') || lower.startsWith('search for ')) {
+      const query = trimmed.replace(/^search(\s+for)?\s+/i, '');
+      await toolRegistry.executeTool('web_search', query);
+      return;
+    }
+
+    if (lower.startsWith('browse ') || lower.startsWith('open url ') || lower.startsWith('fetch url ')) {
+      const url = trimmed.replace(/^(browse|open\s+url|fetch\s+url)\s+/i, '');
+      await toolRegistry.executeTool('browser_agent', url);
+      return;
+    }
+
+    if (lower.startsWith('execute tool: ') || lower.startsWith('run tool: ') || lower.startsWith('run tool [')) {
+      const toolName = trimmed.replace(/^(execute\s+tool:\s*|run\s+tool:\s*|run\s+tool\s*\[?)/i, '').replace(/\]$/, '').trim();
+      const matchedTool = toolRegistry.getAll().find((t) => t.name.toLowerCase() === toolName.toLowerCase() || t.id.toLowerCase() === toolName.toLowerCase());
+      if (matchedTool) {
+        await toolRegistry.executeTool(matchedTool.id, '');
+        return;
+      }
+    }
+
     if (!backendUrl) {
       eventBus.emit('message', {
         role: 'system',

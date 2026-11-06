@@ -1,22 +1,25 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { BackendSystemStatus } from '../../events/useJexaStore';
 import { eventBus } from '../../events/eventBus';
 import { getActiveBrain } from '../../brains';
+import { toolRegistry, Tool } from '../../tools';
 import {
   ShieldCheck,
-  CheckCircle2,
   Cpu,
   Layers,
   Database,
-  Search,
-  Calculator,
-  BarChart3,
   Terminal,
   ChevronRight,
   ChevronDown,
   Minimize2,
   Maximize2,
   Circle,
+  Play,
+  Camera,
+  ExternalLink,
+  X,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 
 interface LeftColumnProps {
@@ -25,6 +28,7 @@ interface LeftColumnProps {
   setActiveModel: (model: string) => void;
   collapsedPanels: Record<string, boolean>;
   toggleCollapse: (panelId: string) => void;
+  onOpenVision?: () => void;
 }
 
 export const LeftColumn: React.FC<LeftColumnProps> = ({
@@ -33,8 +37,25 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
   setActiveModel,
   collapsedPanels,
   toggleCollapse,
+  onOpenVision,
 }) => {
   const isBackendConnected = systemStatus.backendReachable;
+
+  // Real modular tool registry list
+  const [toolsList, setToolsList] = useState<Tool[]>(() => toolRegistry.getAll());
+  const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
+  const [toolInput, setToolInput] = useState<string>('');
+  const [toolRunning, setToolRunning] = useState<boolean>(false);
+  const [toolOutput, setToolOutput] = useState<{ text: string; sources?: Array<{ title: string; url: string }>; success?: boolean } | null>(null);
+
+  // Sync tools list when registry or events change
+  useEffect(() => {
+    const updateTools = () => {
+      setToolsList([...toolRegistry.getAll()]);
+    };
+    const unsub = eventBus.on('tool', updateTools);
+    return unsub;
+  }, []);
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newModel = e.target.value;
@@ -46,16 +67,71 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
     });
   };
 
-  const handleRunTool = (toolName: string) => {
-    eventBus.emit('tool', { name: toolName, status: 'calling', detail: `Running tool [${toolName}]` });
-    eventBus.emit('activity', { id: `tool-${toolName}`, label: `Tool: ${toolName}`, active: true });
-    eventBus.emit('state', { state: 'running_tools', detail: `Executing routine: ${toolName}...` });
-    eventBus.emit('log', { text: `Running tool [${toolName}]...`, level: 'info' });
-    getActiveBrain().send(`Execute tool: ${toolName}`);
+  const handleOpenToolCard = (tool: Tool) => {
+    setSelectedTool(tool);
+    setToolInput('');
+    setToolOutput(null);
+  };
+
+  const handleExecuteTool = async () => {
+    if (!selectedTool) return;
+    setToolRunning(true);
+    setToolOutput(null);
+
+    try {
+      const res = await toolRegistry.executeTool(selectedTool.id, toolInput);
+      setToolOutput({
+        text: res.output,
+        sources: res.sources,
+        success: res.success,
+      });
+    } catch (err: any) {
+      setToolOutput({
+        text: `Execution failed: ${err.message || 'Unknown error'}`,
+        success: false,
+      });
+    } finally {
+      setToolRunning(false);
+    }
   };
 
   const handleRunCommand = (cmd: string) => {
     getActiveBrain().send(cmd);
+  };
+
+  const getStatusBadge = (status: Tool['status']) => {
+    switch (status) {
+      case 'ready':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[8px] font-mono bg-emerald-950/70 text-emerald-400 border border-emerald-500/40">
+            READY
+          </span>
+        );
+      case 'active':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[8px] font-mono bg-cyan-950/70 text-cyan-300 border border-cyan-400/50 animate-pulse">
+            ACTIVE
+          </span>
+        );
+      case 'planned':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[8px] font-mono bg-slate-900 text-slate-400 border border-slate-700">
+            PLANNED
+          </span>
+        );
+      case 'needs_android_app':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[8px] font-mono bg-amber-950/70 text-amber-300 border border-amber-500/40">
+            NEEDS ANDROID
+          </span>
+        );
+      case 'error':
+        return (
+          <span className="px-1.5 py-0.5 rounded text-[8px] font-mono bg-rose-950/70 text-rose-300 border border-rose-500/40">
+            ERROR
+          </span>
+        );
+    }
   };
 
   return (
@@ -104,7 +180,7 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
               </span>
             </div>
 
-            {/* Checklist */}
+            {/* Real Checklist */}
             <div className="flex-1 space-y-0.5 text-[9.5px]">
               <div className="flex items-center gap-1.5">
                 <Circle
@@ -142,11 +218,11 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
               <div className="flex items-center gap-1.5">
                 <Circle
                   className={`w-2.5 h-2.5 shrink-0 ${
-                    systemStatus.tools.length > 0 ? 'text-emerald-400 fill-emerald-400' : 'text-slate-600'
+                    toolsList.length > 0 ? 'text-emerald-400 fill-emerald-400' : 'text-slate-600'
                   }`}
                 />
-                <span className={systemStatus.tools.length > 0 ? 'text-slate-200' : 'text-slate-500'}>
-                  {systemStatus.tools.length > 0 ? 'Tools active' : 'Tools: none registered'}
+                <span className={toolsList.length > 0 ? 'text-slate-200' : 'text-slate-500'}>
+                  {toolsList.length > 0 ? `${toolsList.length} tools active` : 'Tools: none registered'}
                 </span>
               </div>
             </div>
@@ -174,30 +250,24 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
 
         {!collapsedPanels['ai_network'] && (
           <div className="pt-1.5 space-y-1.5">
-            {/* Providers with Online/Not configured dots & Quota Warning */}
             <div className="grid grid-cols-3 gap-1 text-[9px]">
               {['Gemini', 'Groq', 'OpenRouter'].map((name) => {
                 const prov = systemStatus.providers[name];
                 const isOnline = isBackendConnected && prov?.status === 'connected';
-                const hasQuotaWarning = (prov as any)?.quotaWarning || ((prov as any)?.remainingQuotaPercent !== undefined && (prov as any).remainingQuotaPercent < 20);
 
                 return (
-                  <div key={name} className={`flex items-center gap-1 bg-[#050e1c] p-1 rounded border ${hasQuotaWarning ? 'border-amber-500/50 shadow-[0_0_8px_rgba(245,158,11,0.2)]' : 'border-slate-800'}`}>
+                  <div key={name} className="flex items-center gap-1 bg-[#050e1c] p-1 rounded border border-slate-800">
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                        hasQuotaWarning
-                          ? 'bg-amber-400 shadow-[0_0_8px_#f59e0b] animate-pulse'
-                          : isOnline
-                          ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
-                          : 'bg-slate-600'
+                        isOnline ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-slate-600'
                       }`}
                     />
                     <div className="truncate">
-                      <span className={`block font-medium ${hasQuotaWarning ? 'text-amber-300' : isOnline ? 'text-slate-200' : 'text-slate-500'}`}>
+                      <span className={`block font-medium ${isOnline ? 'text-slate-200' : 'text-slate-500'}`}>
                         {name}
                       </span>
                       <span className="text-[8px] text-slate-500 block leading-tight">
-                        {hasQuotaWarning ? 'Quota <20%' : isOnline ? 'Online' : 'Not configured'}
+                        {isOnline ? 'Online' : 'Not configured'}
                       </span>
                     </div>
                   </div>
@@ -205,7 +275,6 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
               })}
             </div>
 
-            {/* Switch Model Dropdown */}
             <div>
               <label className="text-[8.5px] uppercase tracking-wider text-slate-400 block mb-0.5">
                 Active Model
@@ -291,43 +360,57 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
         )}
       </div>
 
-      {/* 4. Tools Center */}
+      {/* 4. Modular Tools Center (Reads Registry with Live Status Badges & Run Cards) */}
       <div className="hud-corner-box hud-corner-accent rounded-lg p-2 shrink-0">
         <div className="flex items-center justify-between pb-1 border-b border-cyan-950/70">
           <div className="flex items-center gap-1.5">
             <Database className="w-3.5 h-3.5 text-cyan-400" />
             <span className="font-heading font-semibold text-slate-100 uppercase text-[10px] tracking-wider">
-              Tools Center
+              Tools Center ({toolsList.length})
             </span>
           </div>
-          <button
-            onClick={() => toggleCollapse('tools_center')}
-            className="p-0.5 text-slate-400 hover:text-cyan-300"
-            aria-label="Collapse Tools Center"
-          >
-            {collapsedPanels['tools_center'] ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
-          </button>
+          <div className="flex items-center gap-1">
+            {onOpenVision && (
+              <button
+                onClick={onOpenVision}
+                title="Launch Vision Studio"
+                className="px-1.5 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-400/40 text-cyan-300 text-[8.5px] flex items-center gap-1"
+              >
+                <Camera className="w-2.5 h-2.5" />
+                <span>Vision</span>
+              </button>
+            )}
+            <button
+              onClick={() => toggleCollapse('tools_center')}
+              className="p-0.5 text-slate-400 hover:text-cyan-300"
+              aria-label="Collapse Tools Center"
+            >
+              {collapsedPanels['tools_center'] ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+            </button>
+          </div>
         </div>
 
         {!collapsedPanels['tools_center'] && (
-          <div className="pt-1.5">
-            {isBackendConnected && systemStatus.tools.length > 0 ? (
-              <div className="grid grid-cols-2 gap-1">
-                {systemStatus.tools.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleRunTool(t.name)}
-                    className="py-1 px-1.5 rounded bg-[#061120] hover:bg-[#0b1f3b] border border-cyan-500/30 text-cyan-300 text-[9.5px] flex items-center gap-1 transition-colors active:scale-95 truncate"
-                  >
-                    <span>{t.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-1 text-slate-500 italic text-[9.5px]">
-                No tools registered
-              </div>
-            )}
+          <div className="pt-1.5 space-y-1">
+            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-0.5">
+              {toolsList.map((tool) => (
+                <button
+                  key={tool.id}
+                  onClick={() => handleOpenToolCard(tool)}
+                  className="w-full text-left p-1.5 rounded bg-[#061120] hover:bg-[#0a1e38] border border-cyan-900/40 hover:border-cyan-500/50 flex items-center justify-between transition-colors group active:scale-98"
+                >
+                  <div className="min-w-0 pr-1">
+                    <div className="font-heading font-medium text-cyan-200 group-hover:text-cyan-100 text-[10px] truncate">
+                      {tool.name}
+                    </div>
+                    <div className="text-[8.5px] text-slate-400 truncate max-w-[140px]">
+                      {tool.description}
+                    </div>
+                  </div>
+                  <div className="shrink-0">{getStatusBadge(tool.status)}</div>
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -353,9 +436,9 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
         {!collapsedPanels['jexa_cmds'] && (
           <div className="pt-1.5 space-y-1">
             {[
-              { label: 'Open WhatsApp', cmd: 'Open WhatsApp' },
-              { label: 'Search for AI news', cmd: 'Search for AI news' },
-              { label: 'Show my calendar', cmd: 'Show my calendar' },
+              { label: 'Search AI breakthroughs', cmd: 'Search AI breakthroughs' },
+              { label: 'Inspect GitHub repository', cmd: 'Inspect GitHub repo' },
+              { label: 'Analyze web page', cmd: 'Browse URL' },
             ].map((item) => (
               <button
                 key={item.label}
@@ -369,6 +452,110 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
           </div>
         )}
       </div>
+
+      {/* MODAL / CARD: TOOL RUN DRAWER CARD */}
+      {selectedTool && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-sm rounded-xl bg-[#050f1d] border border-cyan-500/50 shadow-[0_0_30px_rgba(0,240,255,0.25)] p-3 text-slate-200 font-mono flex flex-col gap-2.5">
+            <div className="flex items-center justify-between border-b border-cyan-900/60 pb-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                <span className="font-heading font-semibold text-xs text-cyan-200">{selectedTool.name}</span>
+                {getStatusBadge(selectedTool.status)}
+              </div>
+              <button
+                onClick={() => setSelectedTool(null)}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <p className="text-[10px] text-slate-300">{selectedTool.description}</p>
+
+            {selectedTool.id === 'vision_engine' && onOpenVision && (
+              <button
+                onClick={() => {
+                  setSelectedTool(null);
+                  onOpenVision();
+                }}
+                className="w-full py-1.5 px-3 rounded bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-400 text-cyan-200 text-[10px] flex items-center justify-center gap-1.5 transition-all"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Launch Interactive Vision Studio</span>
+              </button>
+            )}
+
+            {/* Run Input Field */}
+            <div>
+              <label className="text-[9px] uppercase tracking-wider text-slate-400 block mb-1">
+                Run Parameter / Query
+              </label>
+              <textarea
+                value={toolInput}
+                onChange={(e) => setToolInput(e.target.value)}
+                placeholder={
+                  selectedTool.id === 'web_search'
+                    ? 'Enter query (e.g. quantum computing 2026)'
+                    : selectedTool.id === 'browser_agent'
+                    ? 'Enter URL (e.g. https://news.ycombinator.com)'
+                    : selectedTool.id === 'code_intelligence'
+                    ? 'Enter repo or owner/repo'
+                    : 'Enter input arguments...'
+                }
+                rows={2}
+                className="w-full p-1.5 rounded bg-[#030913] border border-cyan-900 focus-visible:border-cyan-400 focus-visible:outline-none text-[10px] text-cyan-100 font-mono resize-none"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setSelectedTool(null)}
+                className="px-2.5 py-1 rounded text-[10px] text-slate-400 hover:text-slate-200"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleExecuteTool}
+                disabled={toolRunning}
+                className="px-3 py-1 rounded bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-black font-semibold text-[10px] flex items-center gap-1.5 shadow-[0_0_12px_rgba(0,240,255,0.4)] active:scale-95 transition-all"
+              >
+                {toolRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-black" />}
+                <span>{toolRunning ? 'Executing...' : 'Run Tool'}</span>
+              </button>
+            </div>
+
+            {/* Tool Output Box */}
+            {toolOutput && (
+              <div className="mt-1 p-2 rounded bg-[#020710] border border-cyan-950 text-[9.5px] max-h-36 overflow-y-auto space-y-1">
+                <div className="text-slate-400 text-[8.5px] uppercase tracking-wider">Output Result:</div>
+                <div className={toolOutput.success !== false ? 'text-cyan-100' : 'text-rose-300'}>
+                  {toolOutput.text}
+                </div>
+                {toolOutput.sources && toolOutput.sources.length > 0 && (
+                  <div className="pt-1 border-t border-slate-800">
+                    <span className="text-[8.5px] text-slate-400 block mb-0.5">Sources:</span>
+                    <div className="flex flex-col gap-0.5">
+                      {toolOutput.sources.map((s, idx) => (
+                        <a
+                          key={idx}
+                          href={s.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[9px] text-cyan-400 hover:underline flex items-center gap-1 truncate"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                          <span className="truncate">{s.title || s.url}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
