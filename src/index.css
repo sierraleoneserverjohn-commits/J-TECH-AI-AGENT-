@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-dark: #030712;
+    --panel-bg: rgba(6, 14, 28, 0.82);
+    --jexa-accent: #00f0ff;
+    --jexa-accent-glow: rgba(0, 240, 255, 0.4);
+    --jexa-accent-soft: rgba(0, 240, 255, 0.15);
+    --jexa-accent-ring: #38bdf8;
+    --panel-border: var(--jexa-accent-glow);
+    --cyan-glow: var(--jexa-accent-glow);
+    --ice-glow: var(--jexa-accent-glow);
+  }
+
+  body {
+    background-color: var(--bg-dark);
+    color: #e2e8f0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* Custom scrollbar for HUD panels */
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(4, 9, 18, 0.7);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--jexa-accent-soft);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--jexa-accent);
+  }
+}
+
+/* Futuristic Cityscape and Grid Backdrop */
+.jexa-backdrop {
+  background-color: #030712;
+  background-image: 
+    /* Horizon neon skyline gradient */
+    radial-gradient(circle at 50% 65%, var(--jexa-accent-soft) 0%, transparent 65%),
+    radial-gradient(circle at 20% 80%, rgba(37, 99, 235, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(14, 165, 233, 0.08) 0%, transparent 50%),
+    /* Cyberpunk perspective horizontal lines */
+    linear-gradient(to bottom, transparent 60%, var(--jexa-accent-soft) 60%, rgba(0, 240, 255, 0.06) 100%),
+    /* Digital grid overlay */
+    linear-gradient(to right, rgba(0, 240, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 28px 28px, 28px 28px;
+}
+
+/* Faint cityscape silhouette */
+.cityscape-silhouette {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 140px;
+  pointer-events: none;
+  opacity: 0.18;
+  background-repeat: repeat-x;
+  background-position: bottom center;
+  background-size: 600px 140px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 140' preserveAspectRatio='none'%3E%3Cpath fill='%2300f0ff' fill-opacity='0.5' d='M0,140 L0,105 L25,105 L25,85 L35,85 L35,105 L55,105 L55,70 L75,70 L75,60 L80,60 L80,105 L110,105 L110,50 L125,50 L125,40 L130,15 L135,40 L135,105 L160,105 L160,75 L180,75 L180,95 L205,95 L205,65 L225,65 L225,55 L240,55 L240,105 L270,105 L270,45 L290,45 L290,105 L315,105 L315,80 L335,80 L335,105 L360,105 L360,60 L385,60 L385,30 L390,30 L390,105 L420,105 L420,70 L445,70 L445,90 L465,90 L465,55 L485,55 L485,105 L510,105 L510,75 L530,75 L530,95 L555,95 L555,60 L575,60 L575,105 L600,105 L600,140 Z'/%3E%3C/svg%3E");
+}
+
+/* Cyberpunk Angled Corner HUD Panel Container */
+.hud-corner-box {
+  background: rgba(6, 14, 28, 0.85);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--jexa-accent-soft);
+  box-shadow: 
+    inset 0 0 12px var(--jexa-accent-soft),
+    0 4px 18px rgba(0, 0, 0, 0.55);
+  position: relative;
+}
+
+/* Angled Chamfer Corner Accents */
+.hud-corner-accent::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid var(--jexa-accent);
+  border-right: 2px solid var(--jexa-accent);
+  pointer-events: none;
+}
+.hud-corner-accent::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: -1px;
+  width: 8px;
+  height: 8px;
+  border-bottom: 2px solid var(--jexa-accent);
+  border-left: 2px solid var(--jexa-accent);
+  pointer-events: none;
+}
+
+/* Glow effects */
+.glow-cyan-border {
+  border-color: var(--jexa-accent-glow);
+  box-shadow: 0 0 14px var(--jexa-accent-glow);
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 8px var(--jexa-accent);
+}
+
+.font-heading {
+  font-family: 'Chakra Petch', 'JetBrains Mono', -apple-system, sans-serif;
+}
+
+/* Focus and motion */
+*:focus-visible {
+  outline: 2px solid #00f0ff !important;
+  outline-offset: 1px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
