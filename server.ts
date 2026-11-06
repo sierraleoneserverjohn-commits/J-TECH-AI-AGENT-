@@ -196,10 +196,173 @@ app.get('/api/live-token', checkAuth, (_req: Request, res: Response) => {
 
   res.json({
     wsUrl: '/live',
-    model: 'gemini-3.8-live',
+    model: process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live',
     availableVoices: ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir'],
     configured: true,
   });
+});
+app.post(['/live-token', '/api/live-token'], checkAuth, (_req: Request, res: Response) => {
+  if (!apiKey) {
+    return res.status(503).json({
+      error: 'Gemini API key is not configured on the backend server.',
+      configured: false,
+    });
+  }
+  res.json({
+    wsUrl: '/live',
+    model: process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live',
+    availableVoices: ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir'],
+    configured: true,
+    expiresInSeconds: 3600,
+  });
+});
+
+// GET /tools endpoint
+app.get(['/tools', '/api/tools'], checkAuth, (_req: Request, res: Response) => {
+  res.json({ tools: registeredTools });
+});
+
+// GET /status endpoint (matches dashboard and backend spec)
+app.get(['/status'], checkAuth, (_req: Request, res: Response) => {
+  const hasGemini = !!apiKey;
+  const hasGroq = !!process.env.GROQ_API_KEY;
+  const hasOpenRouter = !!process.env.OPENROUTER_API_KEY;
+  const hasSupabase = !!process.env.SUPABASE_URL;
+  const hasUpstash = !!process.env.UPSTASH_REDIS_REST_URL;
+
+  res.json({
+    status: 'ok',
+    backend: 'JEXA Core Autonomous Backend',
+    providers: {
+      Groq: {
+        configured: hasGroq,
+        status: hasGroq ? 'connected' : 'not_configured',
+        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+      },
+      Gemini: {
+        configured: hasGemini,
+        status: hasGemini ? 'connected' : 'not_configured',
+        model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+        liveModel: process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live',
+      },
+      OpenRouter: {
+        configured: hasOpenRouter,
+        status: hasOpenRouter ? 'connected' : 'not_configured',
+        model: process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku',
+      },
+    },
+    databases: {
+      UpstashRedis: { configured: hasUpstash, connected: hasUpstash },
+      Supabase: { configured: hasSupabase, connected: hasSupabase },
+    },
+    tools: registeredTools,
+    timestamp: Date.now(),
+  });
+});
+
+// POST /confirm/:id endpoint
+app.post(['/confirm/:id', '/api/confirm/:id'], checkAuth, (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { approve = true } = req.body;
+  res.json({
+    success: true,
+    id,
+    approved: Boolean(approve),
+    message: approve ? `Action "${id}" approved and executed.` : `Action "${id}" denied.`,
+  });
+});
+
+// GET /events Server-Sent Events (SSE) stream
+const sseClients = new Set<Response>();
+setInterval(() => {
+  for (const client of sseClients) {
+    try {
+      client.write(': ping\n\n');
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}, 20000);
+
+app.get(['/events', '/api/events'], (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  sseClients.add(res);
+  res.write(`event: health\ndata: ${JSON.stringify({ key: 'sse', value: 'connected' })}\n\n`);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
+
+// POST /command endpoint
+app.post(['/command', '/api/command'], checkAuth, async (req: Request, res: Response) => {
+  const { text } = req.body;
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: 'Text command is required' });
+  }
+
+  // 1. Rules before AI (0 tokens)
+  const lower = text.toLowerCase().trim();
+  const mathMatch = text.match(/^(\s*what\s+is\s+)?([0-9\s+\-*/().%eE^]+)$/);
+  if (mathMatch) {
+    try {
+      const clean = mathMatch[2].replace(/\^/g, '**');
+      const val = new Function(`"use strict"; return (${clean});`)();
+      if (typeof val === 'number' && isFinite(val)) {
+        return res.json({
+          reply: `Result: ${clean} = ${val}`,
+          provider: 'LocalEngine (0 tokens)',
+          taskId: `task_${Date.now()}`,
+          handledLocally: true,
+        });
+      }
+    } catch {}
+  }
+
+  if (lower.includes('what time is it') || lower.includes("what's the time") || lower.includes("what's today's date")) {
+    const formatted = new Date().toLocaleString();
+    return res.json({
+      reply: `Current date and time: ${formatted}`,
+      provider: 'LocalEngine (0 tokens)',
+      taskId: `task_${Date.now()}`,
+      handledLocally: true,
+    });
+  }
+
+  if (!ai) {
+    return res.status(503).json({
+      error: 'AI model backend not configured. Set GEMINI_API_KEY in environment variables.',
+      provider: 'None',
+    });
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+      contents: [{ role: 'user', parts: [{ text }] }],
+      config: {
+        systemInstruction: 'You are JEXA, a calm, razor-sharp personal AI command centre. Keep responses concise and factual.',
+        maxOutputTokens: 400,
+      },
+    });
+
+    const reply = response.text || 'Command processed.';
+    return res.json({
+      reply,
+      provider: 'Gemini',
+      model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite',
+      taskId: `task_${Date.now()}`,
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      error: err.message || 'Execution error',
+    });
+  }
 });
 
 // 5. Real Memory Endpoints
