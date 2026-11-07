@@ -2,14 +2,16 @@ import { SpeechEngine, SpeechSessionOptions, LiveVoiceName } from './types';
 import { floatTo16BitPCMBase64, base64ToAudioBuffer, getNormalizedAudioLevel } from './audioUtils';
 import { eventBus } from '../events/eventBus';
 import { toolRegistry } from '../tools';
+import { ApiClient } from '../api/client';
 
 export const CONFIG_LIVE_MODEL = 'gemini-3.8-live';
 
 export interface LiveTokenResponse {
-  wsUrl: string;
   token?: string;
   model: string;
   availableVoices: LiveVoiceName[];
+  configured: boolean;
+  expiresInSeconds?: number;
 }
 
 export class GeminiLiveEngine implements SpeechEngine {
@@ -35,27 +37,25 @@ export class GeminiLiveEngine implements SpeechEngine {
 
   public async isAvailable(): Promise<boolean> {
     if (typeof window === 'undefined' || !window.WebSocket) return false;
+    if (!ApiClient.isConnected()) return false;
     try {
-      const backendUrl = localStorage.getItem('jexa_backend_url') || window.location.origin;
-      const res = await fetch(`${backendUrl}/api/live-token`);
-      return res.ok;
+      const res = await ApiClient.post<LiveTokenResponse>('/live-token');
+      return !!res.configured;
     } catch {
       return false;
     }
   }
 
   public async getLiveToken(): Promise<LiveTokenResponse> {
-    const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
-    const res = await fetch(`${backendUrl}/api/live-token`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Failed to acquire live session token (${res.status})`);
-    }
-    return res.json();
+    return ApiClient.post<LiveTokenResponse>('/live-token');
   }
 
   public async start(options?: SpeechSessionOptions): Promise<void> {
     if (this.isListening) return;
+
+    if (!ApiClient.isConnected()) {
+      throw new Error('Backend not connected. Configure your backend URL in Settings.');
+    }
 
     if (options?.voiceName) {
       this.selectedVoice = options.voiceName;
@@ -101,32 +101,49 @@ export class GeminiLiveEngine implements SpeechEngine {
     source.connect(this.processor);
     this.processor.connect(this.inputAudioCtx.destination);
 
-    // 3. Connect WebSocket to backend Live proxy
-    let wsUrl = tokenConfig.wsUrl || '/live';
-    if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsUrl = `${proto}//${window.location.host}${wsUrl.startsWith('/') ? '' : '/'}${wsUrl}`;
-    }
+    // 3. Connect directly to Gemini Multimodal Live API via WebSockets using ephemeral token
+    // If an ephemeral token was created by the backend, connect directly to Google's live endpoint
+    // otherwise fallback to backend proxy if available
+    const token = tokenConfig.token;
+    const wsUrl = token
+      ? `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(token)}`
+      : `${ApiClient.getBackendUrl().replace(/^http/, 'ws')}/live`;
+
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       this.isListening = true;
       this.sessionDuration = 0;
 
-      // Start session duration timer
       this.sessionTimerInterval = setInterval(() => {
         this.sessionDuration += 1;
       }, 1000);
 
-      // Send initial setup payload with selected voice and model
-      this.ws?.send(
-        JSON.stringify({
-          type: 'setup',
-          model: modelToUse,
-          voice: this.selectedVoice,
-          token: tokenConfig.token,
-        })
-      );
+      // Direct client setup payload matching Gemini Live API
+      const setupMsg = {
+        setup: {
+          model: `models/${modelToUse}`,
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: this.selectedVoice,
+                },
+              },
+            },
+          },
+          systemInstruction: {
+            parts: [
+              {
+                text: 'You are JEXA (JARVIS-class Executive Autonomous Intelligence), a calm, razor-sharp personal AI command centre operating in real-time voice mode. Keep responses concise and conversational.',
+              },
+            ],
+          },
+        },
+      };
+
+      this.ws?.send(JSON.stringify(setupMsg));
 
       eventBus.emit('state', { state: 'listening', detail: `Gemini Live active (${this.selectedVoice})` });
       eventBus.emit('log', {
@@ -141,46 +158,69 @@ export class GeminiLiveEngine implements SpeechEngine {
       if (!this.isListening || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
       const inputData = e.inputBuffer.getChannelData(0);
       const base64Pcm = floatTo16BitPCMBase64(inputData);
-      this.ws.send(JSON.stringify({ type: 'audio', audio: base64Pcm }));
+
+      const audioMsg = {
+        realtimeInput: {
+          mediaChunks: [
+            {
+              mimeType: 'audio/pcm;rate=16000',
+              data: base64Pcm,
+            },
+          ],
+        },
+      };
+
+      this.ws.send(JSON.stringify(audioMsg));
     };
 
     // 5. Handle Live Messages & Interruption
     this.ws.onmessage = async (event) => {
       try {
-        const msg = JSON.parse(event.data);
+        let msg: any;
+        if (event.data instanceof Blob) {
+          const text = await event.data.text();
+          msg = JSON.parse(text);
+        } else {
+          msg = JSON.parse(event.data);
+        }
 
-        // Interruption: user spoke over JEXA -> stop playback immediately!
-        if (msg.interrupted) {
+        // Interruption
+        if (msg.serverContent?.interrupted) {
           this.stopPlayback();
           eventBus.emit('state', { state: 'listening', detail: 'User interruption detected' });
           return;
         }
 
-        // Live Audio playback (24kHz PCM chunk)
-        if (msg.audio) {
-          eventBus.emit('state', { state: 'speaking', detail: 'Gemini Live speaking...' });
-          this.scheduleAudioChunk(msg.audio);
+        // Audio parts in server turn
+        const parts = msg.serverContent?.modelTurn?.parts || [];
+        for (const part of parts) {
+          if (part.inlineData?.data) {
+            eventBus.emit('state', { state: 'speaking', detail: 'Gemini Live speaking...' });
+            this.scheduleAudioChunk(part.inlineData.data);
+          }
+          if (part.text) {
+            eventBus.emit('message', {
+              role: 'assistant',
+              text: part.text,
+              timestamp: Date.now(),
+            });
+          }
         }
 
-        // Transcriptions
-        if (msg.transcript) {
-          eventBus.emit('message', {
-            role: 'assistant',
-            text: msg.transcript,
-            timestamp: Date.now(),
-          });
-        }
-        if (msg.inputTranscript) {
-          eventBus.emit('message', {
-            role: 'user',
-            text: msg.inputTranscript,
-            timestamp: Date.now(),
-          });
+        // User speech transcription if present
+        for (const part of msg.serverContent?.userTurn?.parts ?? []) {
+          if (part.text) {
+            eventBus.emit('message', {
+              role: 'user',
+              text: part.text,
+              timestamp: Date.now(),
+            });
+          }
         }
 
-        // Live Function Calling Tool Trigger
-        if (msg.toolCall && msg.toolCall.name) {
-          const { id, name, args } = msg.toolCall;
+        // Tool function calls
+        for (const call of msg.toolCall?.functionCalls ?? []) {
+          const { id, name, args } = call;
           eventBus.emit('log', {
             text: `[Gemini Live] Invoking tool through live function calling: ${name}`,
             level: 'info',
@@ -189,31 +229,29 @@ export class GeminiLiveEngine implements SpeechEngine {
           const toolInput = typeof args === 'string' ? args : JSON.stringify(args || {});
           const toolResult = await toolRegistry.executeTool(name, toolInput);
 
-          // Send tool result back to live session
           if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(
               JSON.stringify({
-                type: 'toolResponse',
-                id,
-                name,
-                response: { output: toolResult.output, success: toolResult.success },
+                toolResponse: {
+                  functionResponses: [
+                    {
+                      id,
+                      name,
+                      response: { output: toolResult.output, success: toolResult.success },
+                    },
+                  ],
+                },
               })
             );
           }
         }
 
-        // Quota warning or error
+        // Direct error
         if (msg.error) {
-          eventBus.emit('log', {
-            text: `[Gemini Live Error] ${msg.error}`,
-            level: 'error',
-          });
-          if (msg.code === 429 || msg.error.includes('quota') || msg.error.includes('RESOURCE_EXHAUSTED')) {
-            eventBus.emit('provider', {
-              name: 'Gemini',
-              status: 'error',
-              error: 'Live session quota exceeded',
-            });
+          const errMsg = msg.error.message || JSON.stringify(msg.error);
+          eventBus.emit('log', { text: `[Gemini Live Error] ${errMsg}`, level: 'error' });
+          if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+            eventBus.emit('provider', { name: 'Gemini', status: 'error', error: 'Live quota reached' });
           }
         }
       } catch (e) {
@@ -240,7 +278,6 @@ export class GeminiLiveEngine implements SpeechEngine {
       if (!this.isListening) return;
 
       let level = 0;
-      // If speaking, use output analyser; otherwise use mic analyser
       if (this.outputAnalyser && this.activeSources.length > 0) {
         level = getNormalizedAudioLevel(this.outputAnalyser);
       } else if (this.micAnalyser) {
@@ -269,7 +306,6 @@ export class GeminiLiveEngine implements SpeechEngine {
         source.connect(this.outputAudioCtx.destination);
       }
 
-      // Gapless scheduling
       const currentTime = this.outputAudioCtx.currentTime;
       if (this.nextStartTime < currentTime) {
         this.nextStartTime = currentTime + 0.04;

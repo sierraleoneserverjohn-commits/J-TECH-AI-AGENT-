@@ -1,29 +1,22 @@
 import { BrainClient } from './BrainClient';
-import { GeminiBrain } from './GeminiBrain';
-import { RemoteBrain } from './RemoteBrain';
+import { ServerBrain } from './ServerBrain';
 
-export const geminiBrain = new GeminiBrain();
-export const remoteBrain = new RemoteBrain();
+export const serverBrain = new ServerBrain();
 
 export const BRAIN_CLIENTS: Record<string, BrainClient> = {
-  gemini: geminiBrain,
-  remote: remoteBrain,
+  server: serverBrain,
 };
 
-let activeBrainId: string = localStorage.getItem('jexa_active_brain') || 'gemini';
+let activeBrainId: string = 'server';
 
 export function getActiveBrain(): BrainClient {
-  return BRAIN_CLIENTS[activeBrainId] || geminiBrain;
+  return serverBrain;
 }
 
-export function setActiveBrain(id: string): BrainClient {
-  if (BRAIN_CLIENTS[id]) {
-    activeBrainId = id;
-    localStorage.setItem('jexa_active_brain', id);
-  }
-  return getActiveBrain();
+export function setActiveBrain(_id: string): BrainClient {
+  return serverBrain;
 }
 
 export function getActiveBrainId(): string {
-  return activeBrainId;
+  return 'server';
 }

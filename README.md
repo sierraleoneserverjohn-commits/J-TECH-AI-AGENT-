@@ -1,148 +1,103 @@
-# JEXA — Personal AI Command Centre
+# JEXA Autonomous AI Command Centre & Agent Backend
 
-JEXA is a landscape-first, JARVIS-style personal AI command centre built with React, TypeScript, and Tailwind CSS. It is engineered with a real working event bus architecture, an animated multi-state voice orb, real-time node topology map, and a swappable brain engine.
-
----
-
-## Key Features
-
-- **Landscape-First Command HUD**: Optimized for mobile phones in landscape mode, with automated orientation lock overlay and full-screen controls.
-- **Central Voice Orb**: A real-time reactive canvas orb rendering 11 dedicated operational states:
-  - `idle`: Slow breathing ice-blue glow
-  - `listening`: Reacts to live microphone volume via Web Audio API (`AnalyserNode`)
-  - `thinking`: Swirling inner particle vortex
-  - `reasoning`: Rotating concentric geometric rings with outward pulse
-  - `searching`: 360° radar sweep
-  - `working` / `executing`: Fast segmented ring with active progress arc
-  - `typing`: Bouncing status dots
-  - `chatting` / `speaking`: Live waveform equalizer bars
-  - `completed`: Expanding green ripple shockwave
-  - `error`: Red glitch flicker and diagnostic message
-- **Connection Topology Map**: Interactive circular node graph linking 8 providers (Gemini, Groq, OpenRouter, Tavily, Supabase, Upstash Redis, GitHub, Backend server) with live pulse animations and latency probes.
-- **Strict Typed Event Bus**: All UI updates strictly follow the centralized event bus (`state`, `log`, `provider`, `tool`, `task`, `memory`, `health`, `speak`, `message`, `action`).
-- **Swappable Brain Client**:
-  - `GeminiBrain` (default): Uses server-side `@google/genai` proxying `gemini-3.8-flash`.
-  - `RemoteBrain`: Connects to custom backend WebSocket (`ws://` / `wss://`) or HTTP endpoints.
-- **7 Collapsible HUD Panels**: API Monitor, Live Activity stream, Voice controls, Commands & Chat, Tasks progress, Dual-tier Memory (Working & Long-Term), and System Health.
-- **Zero Client Secrets**: No secret keys embedded in browser bundles.
-- **Capacitor Mobile Bridge Stub**: Handles device-specific commands (e.g. WhatsApp, phone messaging) with clear UX cards explaining native requirements.
+JEXA (JARVIS-class Executive Autonomous Intelligence) is a landscape Sci-Fi HUD Command Centre powered by a fault-tolerant, token-efficient agent backend.
 
 ---
 
-## Getting Started Locally
+## Architecture Overview
 
-1. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-2. **Configure environment** (optional):
-   Copy `.env.example` to `.env`:
-   ```bash
-   GEMINI_API_KEY="your-gemini-api-key"
-   ```
-   *(Note: In AI Studio, `GEMINI_API_KEY` is injected automatically via user secrets).*
-
-3. **Start the full-stack dev server**:
-   ```bash
-   npm run dev
-   ```
-   The application runs on `http://localhost:3000`.
-
----
-
-## How to Deploy Frontend to GitHub Pages
-
-GitHub Pages is a static file hosting service. You can deploy the JEXA frontend SPA directly:
-
-### 1. Update `vite.config.ts` Base Path
-Ensure your `vite.config.ts` includes the relative or repository base path:
-```ts
-export default defineConfig({
-  base: './', // or '/<repository-name>/'
-  // ... rest of config
-});
+```
+┌────────────────────────────────────────────────────────┐
+│             JEXA HUD Frontend (React + Vite)           │
+│  • Edge Drawers • Live Holographic Globe • Voice HUD  │
+└──────────────────────────┬─────────────────────────────┘
+                           │ SSE /events & HTTP REST (/command, /tools, /status)
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│            JEXA Core Backend (Express + TS)            │
+│  • Single Source of Truth (/backend)                   │
+│  • Zero-Token Rules Classifier                         │
+│  • Multi-Provider Gateway (Groq, Gemini, OpenRouter)   │
+│  • Circuit Breakers & Daily Caps                       │
+│  • Modular Tools (SSRF-Guarded Search, GitHub, Vision) │
+│  • Context Manager (Upstash REST) & Supabase Memory   │
+└────────────────────────────────────────────────────────┘
 ```
 
-### 2. Build Static Bundle
-Run the production build:
+---
+
+## 1. Local Development
+
+### Prerequisites
+- Node.js 18+ (tested on Node 20+)
+- npm
+
+### Installation & Run
 ```bash
-npm run build
+# Install root dependencies
+npm install
+
+# Run backend test suite
+npm --prefix backend test
+
+# Run type check across root and backend
+npm run check
+
+# Start development server on http://localhost:3000
+npm run dev
 ```
-This produces optimized production assets inside the `dist/` directory.
-
-### 3. Deploy via GitHub Actions
-Create `.github/workflows/deploy.yml` in your repository:
-
-```yaml
-name: Deploy JEXA to GitHub Pages
-
-on:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: 'pages'
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './dist'
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-### 4. Remote Backend Setup for GitHub Pages
-Since GitHub Pages hosts static files without a Node.js server:
-1. Deploy the `server.ts` Express backend to any free container host (e.g., Cloud Run, Render, Railway, or Fly.io).
-2. In the deployed JEXA frontend, open **Settings (Gear icon)**.
-3. Switch the Brain to **Remote Brain** and paste your backend WebSocket (`wss://...`) or HTTP endpoint.
-4. Settings are persisted automatically in `localStorage`.
 
 ---
 
-## Android App Packaging (Capacitor)
+## 2. Deploying Backend to Render (Free Plan)
 
-To compile JEXA into a native Android APK:
-```bash
-npm install @capacitor/core @capacitor/cli @capacitor/android
-npx cap init JEXA com.jexa.ai --web-dir dist
-npm run build
-npx cap add android
-npx cap copy
-npx cap open android
-```
-The included `src/plugins/capacitorStub.ts` provides native hooks for telephony, SMS, and deep links.
+1. Fork or push this repository to GitHub.
+2. In the [Render Dashboard](https://dashboard.render.com), click **New +** -> **Blueprint**.
+3. Select your repository. Render will automatically detect `render.yaml`.
+4. Configure the environment variables in Render:
+   - `ACCESS_TOKEN`: A strong random string for Bearer authentication.
+   - `ALLOWED_ORIGIN`: Your frontend URL (e.g. `https://<your-username>.github.io` or `*` for initial testing).
+   - `GEMINI_API_KEY`: Google AI Studio Gemini API Key.
+   - `GEMINI_MODEL`: (e.g. `gemini-2.0-flash`).
+   - `GEMINI_LIVE_MODEL`: (e.g. `gemini-3.8-live`).
+   - `GROQ_API_KEY`: Groq API Key.
+   - `GROQ_MODEL`: (e.g. `llama-3.3-70b-versatile`).
+   - `OPENROUTER_API_KEY`: OpenRouter API Key.
+   - `OPENROUTER_MODEL`: (e.g. `anthropic/claude-3.5-haiku`).
+   - `TAVILY_API_KEY`: (Optional) Tavily search key for live web search.
+   - `UPSTASH_REDIS_REST_URL` & `UPSTASH_REDIS_REST_TOKEN`: (Optional) Upstash Redis for serverless context cache.
+   - `SUPABASE_URL` & `SUPABASE_SERVICE_KEY`: (Optional) Supabase for long-term memory.
+5. Click **Apply**. Render will run:
+   ```bash
+   npm install --include=dev && npm run build
+   npm start
+   ```
+
+---
+
+## 3. Deploying Frontend to GitHub Pages
+
+1. In GitHub repository settings, navigate to **Settings** > **Pages**.
+2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+3. Push to `main`. The `.github/workflows/deploy.yml` workflow will automatically build and publish the frontend.
+4. Open the deployed GitHub Pages URL in your browser.
+5. Tap **Settings** (top right) in the JEXA Command Centre:
+   - Enter your Render backend URL (e.g. `https://jexa-backend.onrender.com`).
+   - Enter your `ACCESS_TOKEN`.
+   - Click **Test Connection** -> **Save**.
+
+---
+
+## 4. Security Architecture
+
+- **Timing-Safe Auth**: Access tokens are compared with `crypto.timingSafeEqual` in constant time.
+- **Production Guard**: In `NODE_ENV=production`, the backend refuses to start without an `ACCESS_TOKEN`.
+- **SSRF Protection**: Web fetch and search tools resolve DNS before making requests and block:
+  - `127.0.0.0/8` (loopback)
+  - `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` (private networks)
+  - `169.254.0.0/16` (link-local and cloud metadata like `169.254.169.254`)
+  - `::1`, `fc00::/7`, `fe80::/10` (IPv6 private ranges)
+  - Manual redirect tracking up to 3 hops with re-validation on every hop.
+  - 10-second timeout and 1 MB streaming limit.
+- **Safe GitHub Tool**: Strict repository regex validation (`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`) and path traversal protection rejecting `..`.
+- **Zero Raw Error Leaks**: Errors are sanitized before transmission; raw internal stack traces are never sent to clients.

@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: jexa-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: "npm install --include=dev && npm run build"
+    startCommand: "npm start"
+    healthCheckPath: "/"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: ACCESS_TOKEN
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: GEMINI_LIVE_MODEL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+      - key: DAILY_CAP_GROQ
+        value: 14400
+      - key: DAILY_CAP_GEMINI
+        value: 1500
+      - key: DAILY_CAP_OPENROUTER
+        value: 500
+      - key: MAX_OUTPUT_TOKENS
+        value: 400
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

@@ -1,4 +1,5 @@
 import { Tool, ToolResult } from '../types';
+import { ApiClient } from '../../api/client';
 
 export const WebSearchTool: Tool = {
   id: 'web_search',
@@ -12,26 +13,7 @@ export const WebSearchTool: Tool = {
       return { success: false, output: 'Please provide a search query.' };
     }
 
-    const backendUrl =
-      localStorage.getItem('jexa_backend_url') ||
-      (typeof window !== 'undefined' ? window.location.origin : '');
-    const accessToken = localStorage.getItem('jexa_access_token') || '';
-
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-
-    const res = await fetch(`${backendUrl}/api/tools/search`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ query }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Search failed with status ${res.status}`);
-    }
-
-    const data = await res.json();
+    const data = await ApiClient.post('/tools/search', { query });
     return {
       success: true,
       output: data.output || data.answer || 'Search completed.',

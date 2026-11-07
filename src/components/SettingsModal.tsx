@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getActiveBrainId, setActiveBrain, remoteBrain } from '../brains';
+import { getActiveBrainId, setActiveBrain } from '../brains';
 import { eventBus } from '../events/eventBus';
 import { Settings, Cpu, Globe, Server, Check, X, Shield, Activity, Key, RefreshCw, AlertCircle } from 'lucide-react';
 

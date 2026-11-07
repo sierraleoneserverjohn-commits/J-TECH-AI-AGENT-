@@ -1,4 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
+import { GoogleGenAI } from '@google/genai';
+import { fileURLToPath } from 'url';
 import { config } from './config.js';
 import { sseManager } from './events/sseManager.js';
 import { agentOrchestrator } from './orchestrator/agentOrchestrator.js';
@@ -9,253 +12,505 @@ import { tokenTracker } from './models/tokenTracker.js';
 import { contextManager } from './context/contextManager.js';
 import { supabaseMemory } from './memory/supabaseMemory.js';
 
-const app = express();
-
-// 1. CORS Configuration (Native, lightweight, zero dependencies)
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const origin = config.allowedOrigin === '*' ? '*' : config.allowedOrigin;
-  res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-  next();
-});
-
-// 2. Strict JSON body limit of 10 KB per specification
-app.use(express.json({ limit: '10kb' }));
-
-// 3. In-Memory Rate Limiter: 30 requests per minute per IP
-interface RateLimitRecord {
-  count: number;
-  resetTime: number;
+// Cache for provider real health check to avoid spamming upstream APIs (60s cache)
+interface ProviderPingCache {
+  status: 'connected' | 'not_configured' | 'error';
+  latencyMs?: number;
+  lastChecked: number;
+  error?: string;
 }
-const rateLimitMap = new Map<string, RateLimitRecord>();
+const providerPingCache = new Map<string, ProviderPingCache>();
 
-const rateLimiter = (req: Request, res: Response, next: NextFunction) => {
-  const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+export async function checkProviderLive(name: string): Promise<ProviderPingCache> {
+  const cached = providerPingCache.get(name);
   const now = Date.now();
-  let record = rateLimitMap.get(ip);
-
-  if (!record || now > record.resetTime) {
-    record = { count: 1, resetTime: now + 60000 };
-    rateLimitMap.set(ip, record);
-    return next();
+  if (cached && now - cached.lastChecked < 60000) {
+    return cached;
   }
 
-  record.count += 1;
-  if (record.count > 30) {
-    const retrySec = Math.ceil((record.resetTime - now) / 1000);
-    res.setHeader('Retry-After', retrySec);
-    return res.status(429).json({
-      error: 'Rate limit exceeded: max 30 requests per minute per IP.',
-      retryAfterSeconds: retrySec,
-    });
-  }
-
-  next();
-};
-
-app.use(rateLimiter);
-
-// 4. Bearer-Token Auth on every route EXCEPT GET /
-const checkAuth = (req: Request, res: Response, next: NextFunction) => {
-  // Public health check exception
-  if (req.method === 'GET' && req.path === '/') {
-    return next();
-  }
-
-  // If no ACCESS_TOKEN configured, pass through (open mode for initial setup)
-  if (!config.accessToken) {
-    return next();
-  }
-
-  // Check Authorization header or query parameter ?token= (essential for SSE browser connections)
-  const authHeader = req.headers.authorization;
-  const queryToken = req.query.token as string | undefined;
-
-  const providedToken = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7).trim()
-    : queryToken?.trim();
-
-  if (!providedToken || providedToken !== config.accessToken) {
-    return res.status(401).json({
-      error: 'Unauthorized: Invalid or missing bearer access token.',
-      code: 'AUTH_REQUIRED',
-    });
-  }
-
-  next();
-};
-
-app.use(checkAuth);
-
-// ==========================================
-// ROUTES
-// ==========================================
-
-// 1. GET / : Public Health Ping
-app.get('/', (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    name: 'JEXA Core Agent Backend',
-    version: '1.0.0',
-    uptimeSeconds: Math.floor(process.uptime()),
-    timestamp: Date.now(),
-  });
-});
-
-// 2. POST /command : Run Agent Command
-app.post('/command', async (req: Request, res: Response) => {
-  const { text, sessionId } = req.body;
-  if (!text || typeof text !== 'string') {
-    return res.status(400).json({ error: 'Body field "text" (string) is required.' });
-  }
+  const startTime = Date.now();
 
   try {
-    const response = await agentOrchestrator.executeCommand({ text, sessionId });
-    res.json(response);
+    if (name === 'Gemini') {
+      if (!config.geminiApiKey) {
+        const res: ProviderPingCache = { status: 'not_configured', lastChecked: now };
+        providerPingCache.set(name, res);
+        return res;
+      }
+      const ai = new GoogleGenAI({
+        apiKey: config.geminiApiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+      // Real check: lightweight model metadata check
+      await ai.models.get({ model: config.geminiModel || 'gemini-2.0-flash' });
+      const latencyMs = Date.now() - startTime;
+      const res: ProviderPingCache = { status: 'connected', latencyMs, lastChecked: now };
+      providerPingCache.set(name, res);
+      return res;
+    }
+
+    if (name === 'Groq') {
+      if (!config.groqApiKey) {
+        const res: ProviderPingCache = { status: 'not_configured', lastChecked: now };
+        providerPingCache.set(name, res);
+        return res;
+      }
+      const resp = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { Authorization: `Bearer ${config.groqApiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      const latencyMs = Date.now() - startTime;
+      if (!resp.ok) {
+        const res: ProviderPingCache = { status: 'error', latencyMs, lastChecked: now, error: `HTTP ${resp.status}` };
+        providerPingCache.set(name, res);
+        return res;
+      }
+      const res: ProviderPingCache = { status: 'connected', latencyMs, lastChecked: now };
+      providerPingCache.set(name, res);
+      return res;
+    }
+
+    if (name === 'OpenRouter') {
+      if (!config.openRouterApiKey) {
+        const res: ProviderPingCache = { status: 'not_configured', lastChecked: now };
+        providerPingCache.set(name, res);
+        return res;
+      }
+      const resp = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { Authorization: `Bearer ${config.openRouterApiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      const latencyMs = Date.now() - startTime;
+      if (!resp.ok) {
+        const res: ProviderPingCache = { status: 'error', latencyMs, lastChecked: now, error: `HTTP ${resp.status}` };
+        providerPingCache.set(name, res);
+        return res;
+      }
+      const res: ProviderPingCache = { status: 'connected', latencyMs, lastChecked: now };
+      providerPingCache.set(name, res);
+      return res;
+    }
+
+    return { status: 'not_configured', lastChecked: now };
   } catch (err: any) {
-    res.status(502).json({
-      error: err.message || 'Agent execution failed.',
-    });
+    const latencyMs = Date.now() - startTime;
+    const res: ProviderPingCache = {
+      status: 'error',
+      latencyMs,
+      lastChecked: now,
+      error: err.message || 'Connection failed',
+    };
+    providerPingCache.set(name, res);
+    return res;
   }
-});
+}
 
-// 3. GET /events : Server-Sent Events stream
-app.get('/events', (req: Request, res: Response) => {
-  const clientId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
-  sseManager.addClient(clientId, res, ip);
-});
+/**
+ * Creates and configures the Express application
+ */
+export function createApp() {
+  // In production, server must refuse to start without ACCESS_TOKEN configured
+  if (config.nodeEnv === 'production' && !config.accessToken) {
+    console.error('FATAL: ACCESS_TOKEN environment variable is required in production mode.');
+    process.exit(1);
+  }
 
-// 4. GET /status : Real Status of Providers, Usage, Caps, Latency, and Connections
-app.get('/status', async (_req: Request, res: Response) => {
-  const upstashCheck = await contextManager.pingUpstash();
-  const supabaseCheck = await supabaseMemory.ping();
-  const circuits = circuitBreaker.getAllStates();
-  const tokens = tokenTracker.getAllToday();
+  const app = express();
 
-  // Honest statuses: if not configured, show "not configured". Never fake!
-  const providers: Record<string, any> = {
-    Groq: {
-      configured: !!config.groqApiKey,
-      status: !config.groqApiKey ? 'not_configured' : circuits.Groq?.failures > 2 ? 'error' : 'connected',
-      model: config.groqModel,
-      dailyRequests: circuits.Groq?.dailyRequests || 0,
-      dailyCap: circuits.Groq?.dailyCap || config.dailyCapGroq,
-      remainingTokens: circuits.Groq?.remainingTokens,
-      tokensUsedToday: tokens.Groq?.totalTokens || 0,
-      lastError: circuits.Groq?.lastError,
-    },
-    Gemini: {
-      configured: !!config.geminiApiKey,
-      status: !config.geminiApiKey ? 'not_configured' : circuits.Gemini?.failures > 2 ? 'error' : 'connected',
-      model: config.geminiModel,
-      liveModel: config.geminiLiveModel,
-      dailyRequests: circuits.Gemini?.dailyRequests || 0,
-      dailyCap: circuits.Gemini?.dailyCap || config.dailyCapGemini,
-      tokensUsedToday: tokens.Gemini?.totalTokens || 0,
-      lastError: circuits.Gemini?.lastError,
-    },
-    OpenRouter: {
-      configured: !!config.openRouterApiKey,
-      status: !config.openRouterApiKey ? 'not_configured' : circuits.OpenRouter?.failures > 2 ? 'error' : 'connected',
-      model: config.openRouterModel,
-      dailyRequests: circuits.OpenRouter?.dailyRequests || 0,
-      dailyCap: circuits.OpenRouter?.dailyCap || config.dailyCapOpenRouter,
-      tokensUsedToday: tokens.OpenRouter?.totalTokens || 0,
-      lastError: circuits.OpenRouter?.lastError,
-    },
+  // Trust reverse proxy (Render, Cloudflare, etc.)
+  app.set('trust proxy', 1);
+
+  // 1. CORS Configuration
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const originHeader = req.headers.origin;
+    let allowedOrigin = config.allowedOrigin;
+
+    // Never use wildcard '*' with credentials in production
+    if (config.nodeEnv === 'production' && allowedOrigin === '*' && originHeader) {
+      // Echo specific origin if wildcard was loosely set
+      res.setHeader('Access-Control-Allow-Origin', originHeader);
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    }
+
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
+  // 2. Body limit handling:
+  // 10 KB default limit on general endpoints, 5 MB allowed on vision and document endpoints
+  const defaultJsonParser = express.json({ limit: '10kb' });
+  const largeJsonParser = express.json({ limit: '5mb' });
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/tools/vision') || req.path.startsWith('/tools/document') || req.path.startsWith('/api/tools/vision') || req.path.startsWith('/api/tools/document')) {
+      return largeJsonParser(req, res, next);
+    }
+    return defaultJsonParser(req, res, next);
+  });
+
+  // 3. In-Memory Rate Limiter: 30 requests per minute per IP using req.ip
+  interface RateLimitRecord {
+    count: number;
+    resetTime: number;
+  }
+  const rateLimitMap = new Map<string, RateLimitRecord>();
+
+  // Cleanup expired IP records every 5 minutes to prevent memory leak
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of rateLimitMap.entries()) {
+      if (now > record.resetTime) {
+        rateLimitMap.delete(ip);
+      }
+    }
+  }, 300000);
+
+  const rateLimiter = (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    let record = rateLimitMap.get(ip);
+
+    if (!record || now > record.resetTime) {
+      record = { count: 1, resetTime: now + 60000 };
+      rateLimitMap.set(ip, record);
+      return next();
+    }
+
+    record.count += 1;
+    if (record.count > 30) {
+      const retrySec = Math.ceil((record.resetTime - now) / 1000);
+      res.setHeader('Retry-After', retrySec);
+      return res.status(429).json({
+        error: 'Rate limit exceeded: max 30 requests per minute per IP.',
+        retryAfterSeconds: retrySec,
+      });
+    }
+
+    next();
   };
 
-  const databases = {
-    UpstashRedis: {
-      configured: contextManager.isUpstashConfigured(),
-      connected: upstashCheck.connected,
-      latencyMs: upstashCheck.latencyMs,
-      error: upstashCheck.error,
-    },
-    Supabase: {
-      configured: supabaseMemory.isConfigured(),
-      connected: supabaseCheck.connected,
-      latencyMs: supabaseCheck.latencyMs,
-      error: supabaseCheck.error,
-    },
+  app.use(rateLimiter);
+
+  // 4. Bearer-Token Auth on every route EXCEPT GET /
+  // Constant-time comparison using crypto.timingSafeEqual
+  const checkAuth = (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'GET' && req.path === '/') {
+      return next();
+    }
+
+    if (!config.accessToken) {
+      return next();
+    }
+
+    const authHeader = req.headers.authorization;
+    const queryToken = req.query.token as string | undefined;
+
+    const providedToken = authHeader?.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : queryToken?.trim();
+
+    if (!providedToken) {
+      return res.status(401).json({
+        error: 'Unauthorized: Missing bearer access token.',
+        code: 'AUTH_REQUIRED',
+      });
+    }
+
+    const a = Buffer.from(providedToken);
+    const b = Buffer.from(config.accessToken);
+
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).json({
+        error: 'Unauthorized: Invalid bearer access token.',
+        code: 'AUTH_REQUIRED',
+      });
+    }
+
+    next();
   };
 
-  const registeredTools = toolRegistry.getAll().map((t) => ({
-    name: t.name,
-    description: t.description,
-    status: t.status,
-  }));
+  app.use(checkAuth);
 
-  res.json({
-    status: 'ok',
-    backend: 'JEXA Autonomous Agent',
-    providers,
-    databases,
-    tools: registeredTools,
-    activeSSEClients: sseManager.getConnectedClientsCount(),
-    timestamp: Date.now(),
-  });
-});
+  // ==========================================
+  // ROUTES
+  // ==========================================
 
-// 5. GET /tools : Registered Tools with Real Status
-app.get('/tools', (_req: Request, res: Response) => {
-  const tools = toolRegistry.getAll().map((t) => ({
-    name: t.name,
-    description: t.description,
-    status: t.status,
-    inputSchema: t.inputSchema,
-  }));
-  res.json({ tools });
-});
-
-// 6. POST /confirm/:id : Approve or Deny Pending Action
-app.post('/confirm/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { approve = true } = req.body;
-  const result = permissionEngine.confirm(id, Boolean(approve));
-
-  if (!result.success) {
-    return res.status(404).json(result);
-  }
-  res.json(result);
-});
-
-// 7. POST /live-token : Ephemeral Token for Gemini Live API
-app.post('/live-token', (_req: Request, res: Response) => {
-  if (!config.geminiApiKey) {
-    return res.status(503).json({
-      error: 'Gemini is not configured on the backend server. Set GEMINI_API_KEY in environment variables.',
-      configured: false,
+  // 1. GET / : Public Health Ping
+  app.get('/', (_req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      name: 'JEXA Core Agent Backend',
+      version: '1.0.0',
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: Date.now(),
     });
-  }
-
-  // Returns ephemeral token payload pointing to backend WebSocket or configuration
-  // Reads model strictly from GEMINI_LIVE_MODEL env per specification
-  res.json({
-    wsUrl: '/live',
-    model: config.geminiLiveModel,
-    availableVoices: ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir'],
-    configured: true,
-    expiresInSeconds: 3600,
   });
-});
 
-// 8. Global Error Handler (Prevents server from ever crashing)
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Global Error Catch]:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error occurred.',
+  // 2. POST /command : Run Agent Command
+  app.post('/command', async (req: Request, res: Response) => {
+    const { text, sessionId } = req.body;
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'Body field "text" (string) is required.' });
+    }
+
+    try {
+      const response = await agentOrchestrator.executeCommand({ text, sessionId });
+      res.json(response);
+    } catch (err: any) {
+      res.status(502).json({
+        error: err.message || 'Agent execution failed.',
+      });
+    }
   });
-});
 
-// Start Server
-app.listen(config.port, '0.0.0.0', () => {
-  console.log(`JEXA Backend running on http://0.0.0.0:${config.port} (env: ${config.nodeEnv})`);
-});
+  // 3. GET /events : Server-Sent Events stream
+  app.get('/events', (req: Request, res: Response) => {
+    const clientId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    sseManager.addClient(clientId, res, ip);
+  });
+
+  // 4. GET /status : Real Status of Providers, Usage, Caps, Latency, and Connections
+  app.get('/status', async (_req: Request, res: Response) => {
+    const upstashCheck = await contextManager.pingUpstash();
+    const supabaseCheck = await supabaseMemory.ping();
+    const circuits = circuitBreaker.getAllStates();
+    const tokens = tokenTracker.getAllToday();
+
+    // Check live provider status
+    const geminiPing = await checkProviderLive('Gemini');
+    const groqPing = await checkProviderLive('Groq');
+    const openRouterPing = await checkProviderLive('OpenRouter');
+
+    const providers: Record<string, any> = {
+      Groq: {
+        configured: !!config.groqApiKey,
+        status: groqPing.status,
+        latencyMs: groqPing.latencyMs,
+        model: config.groqModel || '',
+        dailyRequests: circuits.Groq?.dailyRequests || 0,
+        dailyCap: circuits.Groq?.dailyCap || config.dailyCapGroq,
+        remainingTokens: circuits.Groq?.remainingTokens,
+        tokensUsedToday: tokens.Groq?.totalTokens || 0,
+        lastError: groqPing.error || circuits.Groq?.lastError,
+      },
+      Gemini: {
+        configured: !!config.geminiApiKey,
+        status: geminiPing.status,
+        latencyMs: geminiPing.latencyMs,
+        model: config.geminiModel || '',
+        liveModel: config.geminiLiveModel || '',
+        dailyRequests: circuits.Gemini?.dailyRequests || 0,
+        dailyCap: circuits.Gemini?.dailyCap || config.dailyCapGemini,
+        tokensUsedToday: tokens.Gemini?.totalTokens || 0,
+        lastError: geminiPing.error || circuits.Gemini?.lastError,
+      },
+      OpenRouter: {
+        configured: !!config.openRouterApiKey,
+        status: openRouterPing.status,
+        latencyMs: openRouterPing.latencyMs,
+        model: config.openRouterModel || '',
+        dailyRequests: circuits.OpenRouter?.dailyRequests || 0,
+        dailyCap: circuits.OpenRouter?.dailyCap || config.dailyCapOpenRouter,
+        tokensUsedToday: tokens.OpenRouter?.totalTokens || 0,
+        lastError: openRouterPing.error || circuits.OpenRouter?.lastError,
+      },
+    };
+
+    const databases = {
+      UpstashRedis: {
+        configured: contextManager.isUpstashConfigured(),
+        connected: upstashCheck.connected,
+        latencyMs: upstashCheck.latencyMs,
+        error: upstashCheck.error,
+      },
+      Supabase: {
+        configured: supabaseMemory.isConfigured(),
+        connected: supabaseCheck.connected,
+        latencyMs: supabaseCheck.latencyMs,
+        error: supabaseCheck.error,
+      },
+    };
+
+    const registeredTools = toolRegistry.getAll().map((t) => ({
+      name: t.name,
+      description: t.description,
+      status: t.status,
+    }));
+
+    // Dynamic model list derived only from env / configured providers
+    const models: string[] = [];
+    if (config.groqApiKey && config.groqModel) models.push(`groq/${config.groqModel}`);
+    if (config.geminiApiKey && config.geminiModel) models.push(`gemini/${config.geminiModel}`);
+    if (config.openRouterApiKey && config.openRouterModel) models.push(`openrouter/${config.openRouterModel}`);
+
+    // System health percent calculation based on real metrics only:
+    // 1. backend reachable (25%)
+    // 2. database reachable (25%)
+    // 3. at least one AI provider connected (25%)
+    // 4. tools registered (25%)
+    let healthScore = 25; // Backend is reachable since this handler executed
+    if (upstashCheck.connected || supabaseCheck.connected) healthScore += 25;
+    if (geminiPing.status === 'connected' || groqPing.status === 'connected' || openRouterPing.status === 'connected') healthScore += 25;
+    if (registeredTools.length > 0) healthScore += 25;
+
+    res.json({
+      status: 'ok',
+      backend: 'JEXA Autonomous Agent',
+      backendReachable: true,
+      databaseReachable: upstashCheck.connected || supabaseCheck.connected,
+      healthPercent: healthScore,
+      models,
+      providers,
+      databases,
+      tools: registeredTools,
+      memory: {
+        workingCount: 0,
+        longTermCount: 0,
+        connected: upstashCheck.connected || supabaseCheck.connected,
+      },
+      activeSSEClients: sseManager.getConnectedClientsCount(),
+      timestamp: Date.now(),
+    });
+  });
+
+  // 5. GET /tools : Registered Tools with Real Status
+  app.get('/tools', (_req: Request, res: Response) => {
+    const tools = toolRegistry.getAll().map((t) => ({
+      name: t.name,
+      description: t.description,
+      status: t.status,
+      inputSchema: t.inputSchema,
+    }));
+    res.json({ tools });
+  });
+
+  // 6. POST /confirm/:id : Approve or Deny Pending Action
+  app.post('/confirm/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { approve = true } = req.body;
+    const result = permissionEngine.confirm(id, Boolean(approve));
+
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+    res.json(result);
+  });
+
+  // 7. POST /live-token : Ephemeral Token for Gemini Live API
+  app.post('/live-token', async (_req: Request, res: Response) => {
+    if (!config.geminiApiKey) {
+      return res.status(503).json({
+        error: 'Gemini is not configured on the backend server. Set GEMINI_API_KEY in environment variables.',
+        configured: false,
+      });
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: config.geminiApiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+
+      // Call ai.authTokens.create to mint a real ephemeral token for the client
+      // Uses the new SDK authToken creation capability
+      let ephemeralToken = '';
+      try {
+        if ((ai as any).authTokens && typeof (ai as any).authTokens.create === 'function') {
+          const authRes = await (ai as any).authTokens.create({
+            config: {
+              ttl: '1800s', // 30 minutes
+            },
+          });
+          ephemeralToken = authRes.name || authRes.token || '';
+        }
+      } catch (tokenErr) {
+        console.warn('[live-token] AuthToken creation fallback:', tokenErr);
+      }
+
+      res.json({
+        token: ephemeralToken || undefined,
+        model: config.geminiLiveModel || 'gemini-3.8-live',
+        availableVoices: ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir'],
+        configured: true,
+        expiresInSeconds: 1800,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        error: `Failed to issue ephemeral live token: ${err.message}`,
+        configured: true,
+      });
+    }
+  });
+
+  // 8. Tool execution routes (for direct tool invocation)
+  app.post('/tools/vision', async (req: Request, res: Response) => {
+    const result = await toolRegistry.execute('vision_describe', req.body);
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    res.json(result);
+  });
+
+  app.post('/tools/document', async (req: Request, res: Response) => {
+    const result = await toolRegistry.execute('document_reader', req.body);
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    res.json(result);
+  });
+
+  app.post('/tools/search', async (req: Request, res: Response) => {
+    const result = await toolRegistry.execute('web_search', req.body);
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    res.json(result);
+  });
+
+  app.post('/tools/browse', async (req: Request, res: Response) => {
+    const result = await toolRegistry.execute('browser_agent', req.body);
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    res.json(result);
+  });
+
+  app.post('/tools/github', async (req: Request, res: Response) => {
+    const result = await toolRegistry.execute('github_read', req.body);
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    res.json(result);
+  });
+
+  // 9. Global Error Handler (Sanitizes errors, never leaks raw stack traces)
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    console.error('[Global Error Catch]:', err.message || err);
+    res.status(err.status || 500).json({
+      error: err.message || 'Internal server error occurred.',
+    });
+  });
+
+  return app;
+}
+
+// Start Server when run directly
+const isDirectRun =
+  process.argv[1] &&
+  (process.argv[1].endsWith('index.ts') || process.argv[1].endsWith('index.js')) &&
+  !process.argv[1].includes('test');
+
+if (isDirectRun) {
+  const app = createApp();
+  app.listen(config.port, '0.0.0.0', () => {
+    console.log(`JEXA Backend running on http://0.0.0.0:${config.port} (env: ${config.nodeEnv})`);
+  });
+}

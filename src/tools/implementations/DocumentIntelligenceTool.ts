@@ -1,4 +1,5 @@
 import { Tool, ToolResult, ToolExecutionContext } from '../types';
+import { ApiClient } from '../../api/client';
 
 export const DocumentIntelligenceTool: Tool = {
   id: 'document_intelligence',
@@ -8,11 +9,6 @@ export const DocumentIntelligenceTool: Tool = {
   category: 'document',
   run: async (input: string, context?: ToolExecutionContext): Promise<ToolResult> => {
     const trimmed = input.trim();
-    const backendUrl =
-      localStorage.getItem('jexa_backend_url') ||
-      (typeof window !== 'undefined' ? window.location.origin : '');
-    const accessToken = localStorage.getItem('jexa_access_token') || '';
-
     let documentContent = '';
     let fileName = 'Uploaded document';
 
@@ -32,28 +28,15 @@ export const DocumentIntelligenceTool: Tool = {
       };
     }
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-
-    const res = await fetch(`${backendUrl}/api/tools/document`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        prompt: trimmed || 'Summarize and extract key insights from this document.',
-        content: documentContent.slice(0, 50000),
-        fileName,
-      }),
+    const data = await ApiClient.post('/tools/document', {
+      query: trimmed || 'Summarize and extract key insights from this document.',
+      content: documentContent.slice(0, 50000),
+      filename: fileName,
     });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Document analysis failed (${res.status})`);
-    }
-
-    const data = await res.json();
     return {
       success: true,
-      output: `### Document Analysis: ${fileName}\n\n${data.analysis || data.reply}`,
+      output: `### Document Analysis: ${fileName}\n\n${data.output || data.analysis || data.reply || 'Analysis completed.'}`,
       metadata: { fileName, length: documentContent.length },
     };
   },

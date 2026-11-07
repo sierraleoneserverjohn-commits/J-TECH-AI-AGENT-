@@ -2,6 +2,7 @@ import { Tool, ToolResult, ToolContext } from './types.js';
 import { calculatorTool } from './calculator.js';
 import { datetimeTool } from './datetime.js';
 import { webSearchTool } from './webSearch.js';
+import { browseTool } from './browse.js';
 import { githubReadTool } from './githubRead.js';
 import { memorySaveTool } from './memorySave.js';
 import { memorySearchTool } from './memorySearch.js';
@@ -17,6 +18,7 @@ export class ToolRegistry {
     this.register(calculatorTool);
     this.register(datetimeTool);
     this.register(webSearchTool);
+    this.register(browseTool);
     this.register(githubReadTool);
     this.register(memorySaveTool);
     this.register(memorySearchTool);

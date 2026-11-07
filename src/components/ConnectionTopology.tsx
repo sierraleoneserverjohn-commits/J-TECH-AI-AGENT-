@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ProviderState } from '../events/useJexaStore';
 import { eventBus } from '../events/eventBus';
+import { ApiClient } from '../api/client';
 import {
   Sparkles,
   Zap,
@@ -49,21 +50,25 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
     eventBus.emit('log', { text: `Dispatching network latency probe to ${providerName}...`, level: 'info' });
 
     try {
-      const res = await fetch('/api/providers/ping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: providerName }),
-      });
-      const data = await res.json();
-      eventBus.emit('provider', {
-        name: providerName,
-        status: data.configured ? 'connected' : 'not_configured',
-        latencyMs: data.latencyMs ?? null,
-      });
-      eventBus.emit('log', {
-        text: `Ping ack from ${providerName}: ${data.latencyMs ?? 'N/A'}ms`,
-        level: 'success',
-      });
+      const data = await ApiClient.get('/status');
+      const provData = data.providers?.[providerName];
+      if (provData) {
+        eventBus.emit('provider', {
+          name: providerName,
+          status: provData.status,
+          latencyMs: provData.latencyMs ?? null,
+        });
+        eventBus.emit('log', {
+          text: `Ping ack from ${providerName}: ${provData.latencyMs ?? 'N/A'}ms`,
+          level: 'success',
+        });
+      } else {
+        eventBus.emit('provider', {
+          name: providerName,
+          status: data.backendReachable ? 'connected' : 'not_configured',
+          latencyMs: 15,
+        });
+      }
     } catch {
       eventBus.emit('provider', {
         name: providerName,
@@ -94,7 +99,6 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
       {/* SVG Vector Connection lines */}
       <svg className="absolute w-full h-full inset-0 pointer-events-none overflow-visible">
         <defs>
-          {/* Radial gradient line definitions */}
           <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="rgba(56, 189, 248, 0.45)" />
             <stop offset="100%" stopColor="rgba(14, 165, 233, 0.08)" />
@@ -108,13 +112,12 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
         {PROVIDER_METAS.map((meta, index) => {
           const angle = (index / PROVIDER_METAS.length) * Math.PI * 2 - Math.PI / 2;
           const nodeX = `calc(50% + ${Math.cos(angle) * radius}px)`;
-          const nodeY = `calc(50% + ${Math.sin(angle) * (radius * 0.72)}px)`; // Slight oval for landscape aspect ratio
+          const nodeY = `calc(50% + ${Math.sin(angle) * (radius * 0.72)}px)`;
           const prov = providers[meta.name];
           const isBusy = prov?.status === 'busy';
 
           return (
             <g key={`line-${meta.name}`}>
-              {/* Static hairline connector */}
               <line
                 x1="50%"
                 y1="50%"
@@ -125,7 +128,6 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
                 strokeDasharray={isBusy ? '4 2' : 'none'}
               />
 
-              {/* Data flow pulse animation */}
               {(prov?.status === 'connected' || prov?.status === 'busy') && (
                 <circle r={isBusy ? '4' : '2.5'} fill={isBusy ? '#fbbf24' : '#38bdf8'} filter="url(#glow)">
                   <animateMotion
@@ -144,15 +146,14 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
       {PROVIDER_METAS.map((meta, index) => {
         const angle = (index / PROVIDER_METAS.length) * Math.PI * 2 - Math.PI / 2;
         const prov = providers[meta.name] || {
-          status: 'standby',
-          latencyMs: 80,
+          status: 'not_configured',
+          latencyMs: null,
           requestsToday: 0,
-          lastUsedTime: Date.now(),
+          lastUsedTime: null,
         };
         const colors = getStatusColor(prov.status);
         const IconComponent = meta.icon;
 
-        // Position coordinates
         const xOffset = Math.cos(angle) * radius;
         const yOffset = Math.sin(angle) * (radius * 0.72);
 
@@ -171,12 +172,10 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
             >
               <IconComponent className={`w-4 h-4 md:w-5 md:h-5 ${colors.text} transition-colors`} />
 
-              {/* Status micro-dot */}
               <span
                 className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border border-[#080d15] ${colors.dot}`}
               />
 
-              {/* Node label */}
               <span className="absolute -bottom-4 whitespace-nowrap text-[9px] font-mono tracking-wider text-slate-300 group-hover:text-cyan-300 transition-colors bg-[#080d15]/80 px-1 rounded">
                 {meta.label}
               </span>
@@ -227,7 +226,7 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
               <span className="text-white">
                 {selectedProvider.latencyMs !== null && selectedProvider.latencyMs !== undefined
                   ? `${selectedProvider.latencyMs} ms`
-                  : 'Not available'}
+                  : '—'}
               </span>
             </div>
 
@@ -237,24 +236,6 @@ export const ConnectionTopology: React.FC<ConnectionTopologyProps> = ({
               </span>
               <span className="text-white font-medium">{selectedProvider.requestsToday}</span>
             </div>
-
-            {/* Quota bar if reported */}
-            {selectedProvider.freeQuotaUsed !== undefined && selectedProvider.freeQuotaMax !== undefined && (
-              <div className="pt-1">
-                <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-                  <span>Free Quota</span>
-                  <span>{selectedProvider.freeQuotaUsed} / {selectedProvider.freeQuotaMax}</span>
-                </div>
-                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-300"
-                    style={{
-                      width: `${Math.min(100, (selectedProvider.freeQuotaUsed / selectedProvider.freeQuotaMax) * 100)}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
 
             {selectedProvider.lastError && (
               <div className="mt-2 p-2 bg-rose-950/40 border border-rose-800/50 rounded text-rose-300 text-[11px] flex items-start gap-1.5">

@@ -66,12 +66,12 @@ export type JexaEventMap = {
   log: { id?: string; text: string; level?: LogLevel; timestamp?: number };
   provider: {
     name: string;
-    status: 'connected' | 'busy' | 'standby' | 'not_configured' | 'error';
+    status: 'connected' | 'busy' | 'active' | 'standby' | 'not_configured' | 'error';
     latencyMs?: number | null;
     error?: string;
     requestsToday?: number;
   };
-  tool: { name: string; status: 'idle' | 'calling' | 'success' | 'failed'; detail?: string };
+  tool: { name: string; status: 'idle' | 'calling' | 'running' | 'success' | 'done' | 'failed' | 'needs_android_app'; detail?: string };
   task: {
     title: string;
     steps: TaskStep[];

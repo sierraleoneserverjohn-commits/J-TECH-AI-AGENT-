@@ -1,5 +1,6 @@
 import { Tool, ToolResult } from '../types';
 import { eventBus } from '../../events/eventBus';
+import { ApiClient } from '../../api/client';
 
 export const CodeIntelligenceTool: Tool = {
   id: 'code_intelligence',
@@ -54,29 +55,11 @@ export const CodeIntelligenceTool: Tool = {
       });
     }
 
-    const backendUrl =
-      localStorage.getItem('jexa_backend_url') ||
-      (typeof window !== 'undefined' ? window.location.origin : '');
-    const accessToken = localStorage.getItem('jexa_access_token') || '';
+    const data = await ApiClient.post('/tools/github', { repo: trimmed });
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-
-    const res = await fetch(`${backendUrl}/api/tools/code`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ query: trimmed }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Code intelligence query failed (${res.status})`);
-    }
-
-    const data = await res.json();
     return {
       success: true,
-      output: data.analysis || data.output || 'Code analysis complete.',
+      output: data.output || data.analysis || 'Code analysis complete.',
       sources: data.sources || [],
       metadata: data.metadata,
     };

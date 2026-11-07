@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   eventBus,
   OrbState,
@@ -7,6 +7,7 @@ import {
   MemoryItem,
   ActionItem,
 } from './eventBus';
+import { ApiClient } from '../api/client';
 
 export interface ProviderState {
   name: string;
@@ -24,12 +25,13 @@ export interface BackendSystemStatus {
   backendReachable: boolean;
   databaseReachable: boolean;
   models: string[];
-  tools: { id: string; name: string; description: string }[];
-  providers: Record<string, { configured: boolean; status: 'connected' | 'not_configured' | 'error'; latencyMs?: number }>;
+  tools: { name: string; description: string; status?: string }[];
+  providers: Record<string, { configured: boolean; status: 'connected' | 'not_configured' | 'error'; latencyMs?: number; model?: string }>;
   memoryConnected: boolean;
   workingCount: number;
   longTermCount: number;
-  healthPercent: number | null; // null if backend not reachable
+  healthPercent: number | null; // null if backend not reachable -> displayed as "—"
+  sseStatus: 'connected' | 'reconnecting' | 'disconnected';
 }
 
 export interface LogItem {
@@ -73,7 +75,7 @@ export function useJexaStore() {
   const [activityChips, setActivityChips] = useState<ActivityChip[]>([]);
   const [activeProviderUsage, setActiveProviderUsage] = useState<ActiveProviderUsage | null>(null);
 
-  // 1. Live activity starts EMPTY - only real events from the event bus appear!
+  // 1. Live activity starts EMPTY - only real events appear!
   const [logs, setLogs] = useState<LogItem[]>([]);
 
   // Messages starts empty
@@ -96,83 +98,24 @@ export function useJexaStore() {
       Gemini: { configured: false, status: 'not_configured' },
       Groq: { configured: false, status: 'not_configured' },
       OpenRouter: { configured: false, status: 'not_configured' },
-      Supabase: { configured: false, status: 'not_configured' },
-      'Upstash Redis': { configured: false, status: 'not_configured' },
-      'Backend server': { configured: false, status: 'not_configured' },
     },
     memoryConnected: false,
     workingCount: 0,
     longTermCount: 0,
-    healthPercent: null, // Shows "—" when backend is not connected
+    healthPercent: null, // "—" when backend is not connected
+    sseStatus: 'disconnected',
   });
 
-  // Actions requiring confirmation or mobile app
   const [currentAction, setCurrentAction] = useState<ActionItem | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
-  // Real sync with configured backend URL
+  // Real sync with backend /status
   const refreshBackendStatus = useCallback(async () => {
-    const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
-    const accessToken = localStorage.getItem('jexa_access_token') || '';
-
-    if (!backendUrl) {
+    if (!ApiClient.isConnected()) {
       setSystemStatus((prev) => ({
         ...prev,
-        backendReachable: false,
-        databaseReachable: false,
-        models: [],
-        tools: [],
-        memoryConnected: false,
-        healthPercent: null,
-      }));
-      return;
-    }
-
-    try {
-      const headers: Record<string, string> = {};
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
-
-      const res = await fetch(`${backendUrl}/api/system/status`, {
-        headers,
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-
-      // Calculate health percent strictly from real checks:
-      // 1. backend reachable (25%)
-      // 2. database reachable (25%)
-      // 3. at least one AI provider connected (25%)
-      // 4. tools registered (25%)
-      let score = 0;
-      if (data.backendReachable) score += 25;
-      if (data.databaseReachable) score += 25;
-      if (data.models && data.models.length > 0) score += 25;
-      if (data.tools && data.tools.length > 0) score += 25;
-
-      setSystemStatus({
-        backendReachable: true,
-        databaseReachable: !!data.databaseReachable,
-        models: data.models || [],
-        tools: data.tools || [],
-        providers: data.providers || {},
-        memoryConnected: !!data.memory?.connected,
-        workingCount: data.memory?.workingCount || 0,
-        longTermCount: data.memory?.longTermCount || 0,
-        healthPercent: score,
-      });
-
-      eventBus.emit('health', {
-        key: 'api',
-        value: data.backendReachable ? 'healthy' : 'offline',
-        message: 'Backend synchronized',
-      });
-    } catch {
-      setSystemStatus({
         backendReachable: false,
         databaseReachable: false,
         models: [],
@@ -181,16 +124,169 @@ export function useJexaStore() {
           Gemini: { configured: false, status: 'not_configured' },
           Groq: { configured: false, status: 'not_configured' },
           OpenRouter: { configured: false, status: 'not_configured' },
-          Supabase: { configured: false, status: 'not_configured' },
-          'Upstash Redis': { configured: false, status: 'not_configured' },
-          'Backend server': { configured: false, status: 'not_configured' },
+        },
+        memoryConnected: false,
+        healthPercent: null,
+      }));
+      return;
+    }
+
+    try {
+      const data = await ApiClient.get('/status');
+
+      setSystemStatus((prev) => ({
+        ...prev,
+        backendReachable: true,
+        databaseReachable: !!data.databaseReachable,
+        models: data.models || [],
+        tools: data.tools || [],
+        providers: data.providers || {},
+        memoryConnected: !!data.memory?.connected,
+        workingCount: data.memory?.workingCount || 0,
+        longTermCount: data.memory?.longTermCount || 0,
+        healthPercent: typeof data.healthPercent === 'number' ? data.healthPercent : 25,
+      }));
+
+      eventBus.emit('health', {
+        key: 'api',
+        value: 'healthy',
+        message: 'Backend synchronized',
+      });
+    } catch {
+      setSystemStatus((prev) => ({
+        ...prev,
+        backendReachable: false,
+        databaseReachable: false,
+        models: [],
+        tools: [],
+        providers: {
+          Gemini: { configured: false, status: 'not_configured' },
+          Groq: { configured: false, status: 'not_configured' },
+          OpenRouter: { configured: false, status: 'not_configured' },
         },
         memoryConnected: false,
         workingCount: 0,
         longTermCount: 0,
-        healthPercent: null, // "—" when backend not connected
-      });
+        healthPercent: null,
+      }));
     }
+  }, []);
+
+  // Server-Sent Events (SSE) connection with auto-reconnect and exponential backoff
+  useEffect(() => {
+    let isMounted = true;
+
+    const connectSSE = () => {
+      if (!ApiClient.isConnected()) {
+        setSystemStatus((prev) => ({ ...prev, sseStatus: 'disconnected' }));
+        return;
+      }
+
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+
+      const backendUrl = ApiClient.getBackendUrl();
+      const token = ApiClient.getAccessToken();
+      const sseUrl = `${backendUrl}/events${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+
+      try {
+        const es = new EventSource(sseUrl);
+        sseRef.current = es;
+
+        es.onopen = () => {
+          if (!isMounted) return;
+          reconnectAttemptsRef.current = 0;
+          setSystemStatus((prev) => ({ ...prev, sseStatus: 'connected' }));
+          eventBus.emit('log', { text: '[SSE] Real-time event stream connected.', level: 'info' });
+        };
+
+        // Listen for specific typed SSE events from backend:
+        // state, log, provider, tool, task, memory, health, message
+        es.addEventListener('state', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('state', data);
+          } catch {}
+        });
+
+        es.addEventListener('log', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('log', data);
+          } catch {}
+        });
+
+        es.addEventListener('provider', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('provider', data);
+          } catch {}
+        });
+
+        es.addEventListener('tool', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('tool', data);
+          } catch {}
+        });
+
+        es.addEventListener('task', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('task', data);
+          } catch {}
+        });
+
+        es.addEventListener('memory', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('memory', data);
+          } catch {}
+        });
+
+        es.addEventListener('health', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('health', data);
+          } catch {}
+        });
+
+        es.addEventListener('message', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('message', data);
+          } catch {}
+        });
+
+        es.onerror = () => {
+          if (!isMounted) return;
+          setSystemStatus((prev) => ({ ...prev, sseStatus: 'reconnecting' }));
+          es.close();
+          sseRef.current = null;
+
+          // Exponential backoff reconnect
+          const backoff = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          reconnectAttemptsRef.current += 1;
+          reconnectTimeoutRef.current = setTimeout(connectSSE, backoff);
+        };
+      } catch {
+        setSystemStatus((prev) => ({ ...prev, sseStatus: 'reconnecting' }));
+      }
+    };
+
+    connectSSE();
+
+    return () => {
+      isMounted = false;
+      if (sseRef.current) {
+        sseRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Poll backend health real data once on mount and every 30s
@@ -237,7 +333,6 @@ export function useJexaStore() {
           }
           return [...prev, { id: payload.id, label: payload.label, active: true, timestamp: Date.now() }];
         } else {
-          // Fade out chip
           return prev.map((c) => (c.id === payload.id ? { ...c, active: false } : c));
         }
       });
@@ -251,7 +346,7 @@ export function useJexaStore() {
 
     const unsubTool = eventBus.on('tool', (payload) => {
       const chipId = `tool-${payload.name}`;
-      if (payload.status === 'calling') {
+      if (payload.status === 'calling' || payload.status === 'running') {
         setActivityChips((prev) => {
           const filtered = prev.filter((c) => c.id !== chipId);
           return [
@@ -268,7 +363,7 @@ export function useJexaStore() {
     });
 
     const unsubProvider = eventBus.on('provider', (payload) => {
-      if (payload.status === 'busy') {
+      if (payload.status === 'busy' || payload.status === 'active') {
         setActiveProviderUsage({
           name: payload.name,
           latencyMs: payload.latencyMs ?? undefined,

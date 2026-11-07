@@ -1,4 +1,5 @@
 import { ApiConnector } from './types';
+import { ApiClient } from '../../api/client';
 
 export const GitHubConnector: ApiConnector = {
   id: 'github',
@@ -15,11 +16,11 @@ export const GitHubConnector: ApiConnector = {
       name: 'Search Repositories',
       description: 'Find public GitHub repositories by topic or query',
       requiresConfirmation: false,
-      execute: async ({ query }) => {
-        const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
-        const res = await fetch(`${backendUrl}/api/tools/github?action=search&q=${encodeURIComponent(query || 'AI')}`);
-        if (!res.ok) throw new Error(`GitHub search failed (${res.status})`);
-        return res.json();
+      execute: async ({ query, repo }) => {
+        return ApiClient.post('/tools/github', {
+          action: 'info',
+          repo: repo || query || 'facebook/react',
+        });
       },
     },
     {
@@ -28,12 +29,11 @@ export const GitHubConnector: ApiConnector = {
       description: 'Fetch and view source file content from a repository',
       requiresConfirmation: false,
       execute: async ({ repo, path }) => {
-        const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
-        const res = await fetch(
-          `${backendUrl}/api/tools/github?action=file&repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path || 'README.md')}`
-        );
-        if (!res.ok) throw new Error(`Failed to read repo file (${res.status})`);
-        return res.json();
+        return ApiClient.post('/tools/github', {
+          action: 'file',
+          repo: repo || 'facebook/react',
+          path: path || 'package.json',
+        });
       },
     },
     {
@@ -42,15 +42,12 @@ export const GitHubConnector: ApiConnector = {
       description: 'File an issue or bug ticket on GitHub repository',
       requiresConfirmation: true,
       execute: async ({ repo, title, body }) => {
-        const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
-        const token = localStorage.getItem('jexa_github_token') || '';
-        const res = await fetch(`${backendUrl}/api/tools/github`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'create_issue', repo, title, body, token }),
+        return ApiClient.post('/tools/github', {
+          action: 'create_issue',
+          repo,
+          title,
+          body,
         });
-        if (!res.ok) throw new Error(`Failed to create issue (${res.status})`);
-        return res.json();
       },
     },
   ],

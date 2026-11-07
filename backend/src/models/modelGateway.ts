@@ -166,7 +166,7 @@ export class ModelGateway {
       if (!res.ok) {
         const retryAfter = res.headers.get('retry-after');
         const retrySec = retryAfter ? parseInt(retryAfter, 10) : undefined;
-        const errJson = await res.json().catch(() => ({}));
+        const errJson = (await res.json().catch(() => ({}))) as any;
         const errMsg = errJson?.error?.message || `Groq returned HTTP ${res.status}`;
         circuitBreaker.recordFailure('Groq', errMsg, res.status, retrySec);
         throw new Error(errMsg);
@@ -283,7 +283,7 @@ export class ModelGateway {
       if (!res.ok) {
         const retryAfter = res.headers.get('retry-after');
         const retrySec = retryAfter ? parseInt(retryAfter, 10) : undefined;
-        const errJson = await res.json().catch(() => ({}));
+        const errJson = (await res.json().catch(() => ({}))) as any;
         const errMsg = errJson?.error?.message || `OpenRouter returned HTTP ${res.status}`;
         circuitBreaker.recordFailure('OpenRouter', errMsg, res.status, retrySec);
         throw new Error(errMsg);

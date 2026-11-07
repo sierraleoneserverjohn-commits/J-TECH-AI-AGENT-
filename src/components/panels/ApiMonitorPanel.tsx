@@ -1,37 +1,32 @@
 import React, { useState } from 'react';
 import { ProviderState } from '../../events/useJexaStore';
 import { eventBus } from '../../events/eventBus';
+import { ApiClient } from '../../api/client';
 import { RefreshCw, AlertCircle, Clock } from 'lucide-react';
 
 interface ApiMonitorPanelProps {
   providers: Record<string, ProviderState>;
+  onRefresh?: () => void;
 }
 
-export const ApiMonitorPanel: React.FC<ApiMonitorPanelProps> = ({ providers }) => {
+export const ApiMonitorPanel: React.FC<ApiMonitorPanelProps> = ({ providers, onRefresh }) => {
   const [refreshing, setRefreshing] = useState<string | null>(null);
 
   const testProvider = async (name: string) => {
     setRefreshing(name);
     eventBus.emit('provider', { name, status: 'busy' });
 
-    const backendUrl = localStorage.getItem('jexa_backend_url') || (typeof window !== 'undefined' ? window.location.origin : '');
-    const accessToken = localStorage.getItem('jexa_access_token') || '';
-
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-
-      const res = await fetch(`${backendUrl}/api/providers/ping`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ provider: name }),
-      });
-      const data = await res.json();
-      eventBus.emit('provider', {
-        name,
-        status: data.configured ? 'connected' : 'not_configured',
-        latencyMs: data.latencyMs ?? null,
-      });
+      const data = await ApiClient.get('/status');
+      const providerData = data.providers?.[name];
+      if (providerData) {
+        eventBus.emit('provider', {
+          name,
+          status: providerData.status,
+          latencyMs: providerData.latencyMs ?? null,
+        });
+      }
+      if (onRefresh) onRefresh();
     } catch {
       eventBus.emit('provider', { name, status: 'error' });
     } finally {
