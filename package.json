@@ -9,10 +9,16 @@
     "start": "tsx server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "postinstall": "node scripts/patch-capacitor-cli.mjs",
+    "cap:sync": "cap sync android",
     "check": "tsc --noEmit && npm --prefix backend run build",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "^7.0.0",
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
     "@google/genai": "^2.32.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",

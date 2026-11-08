@@ -84,15 +84,25 @@ export class GeminiLiveEngine implements SpeechEngine {
     this.outputAnalyser = this.outputAudioCtx.createAnalyser();
     this.outputAnalyser.fftSize = 256;
 
-    // 2. Capture Microphone Stream
-    this.micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: 16000,
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
-    });
+    // 2. Capture Microphone Stream with permission handling
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+    } catch (micErr: any) {
+      this.cleanup();
+      const msg = micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError'
+        ? 'Microphone permission denied. Please allow microphone access in your browser or device settings.'
+        : `Microphone error: ${micErr.message || 'Cannot access audio input'}`;
+      eventBus.emit('log', { text: `[Gemini Live] ${msg}`, level: 'error' });
+      eventBus.emit('message', { role: 'system', text: msg });
+      throw new Error(msg);
+    }
 
     const source = this.inputAudioCtx.createMediaStreamSource(this.micStream);
     this.processor = this.inputAudioCtx.createScriptProcessor(2048, 1, 1);

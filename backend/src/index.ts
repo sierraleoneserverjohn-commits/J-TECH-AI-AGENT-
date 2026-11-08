@@ -123,16 +123,34 @@ export function createApp() {
   // 1. CORS Configuration
   app.use((req: Request, res: Response, next: NextFunction) => {
     const originHeader = req.headers.origin;
-    let allowedOrigin = config.allowedOrigin;
+    const rawAllowed = config.allowedOrigin || '';
+    const allowedList = rawAllowed
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    // Never use wildcard '*' with credentials in production
-    if (config.nodeEnv === 'production' && allowedOrigin === '*' && originHeader) {
-      // Echo specific origin if wildcard was loosely set
-      res.setHeader('Access-Control-Allow-Origin', originHeader);
+    // Default origins always trusted for local development & Capacitor Android app
+    const defaultOrigins = [
+      'https://localhost',
+      'http://localhost',
+      'capacitor://localhost',
+      'http://localhost:3000',
+    ];
+
+    let matchOrigin = '';
+    if (originHeader) {
+      if (allowedList.includes('*') && config.nodeEnv !== 'production') {
+        matchOrigin = originHeader;
+      } else if (allowedList.includes(originHeader) || defaultOrigins.includes(originHeader)) {
+        matchOrigin = originHeader;
+      }
     } else {
-      res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+      matchOrigin = allowedList[0] || '*';
     }
 
+    if (matchOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', matchOrigin);
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
     res.setHeader('Access-Control-Allow-Credentials', 'true');

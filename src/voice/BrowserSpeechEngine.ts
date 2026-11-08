@@ -2,10 +2,12 @@ import { SpeechEngine, SpeechSessionOptions } from './types';
 import { getNormalizedAudioLevel } from './audioUtils';
 import { eventBus } from '../events/eventBus';
 import { getActiveBrain } from '../brains';
+import { Capacitor } from '@capacitor/core';
+import { SpeechRecognition as CapSpeechRecognition } from '@capacitor-community/speech-recognition';
 
 export class BrowserSpeechEngine implements SpeechEngine {
   public id = 'browser_speech' as const;
-  public name = 'Browser Speech (Automatic Fallback)';
+  public name = 'Speech Recognition (Capacitor/Browser Fallback)';
   public isListening = false;
   public audioLevel = 0;
   public sessionDuration = 0;
@@ -16,8 +18,17 @@ export class BrowserSpeechEngine implements SpeechEngine {
   private stream: MediaStream | null = null;
   private levelAnimFrame: number | null = null;
   private sessionTimerInterval: NodeJS.Timeout | null = null;
+  private isCapacitor = false;
 
   public async isAvailable(): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { available } = await CapSpeechRecognition.available();
+        return !!available;
+      } catch {
+        return false;
+      }
+    }
     if (typeof window === 'undefined') return false;
     return !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
   }
@@ -25,14 +36,86 @@ export class BrowserSpeechEngine implements SpeechEngine {
   public async start(_options?: SpeechSessionOptions): Promise<void> {
     if (this.isListening) return;
 
+    this.isCapacitor = Capacitor.isNativePlatform();
+
+    // 1. If running natively inside Capacitor Android APK:
+    if (this.isCapacitor) {
+      try {
+        // Check and request microphone / speech recognition permissions
+        const permStatus = await CapSpeechRecognition.checkPermissions();
+        if (permStatus.speechRecognition !== 'granted') {
+          eventBus.emit('log', {
+            text: '[Voice] Requesting microphone and speech recognition permission...',
+            level: 'info',
+          });
+          const req = await CapSpeechRecognition.requestPermissions();
+          if (req.speechRecognition !== 'granted') {
+            throw new Error('Microphone permission was denied. Please allow microphone access in Android app settings.');
+          }
+        }
+
+        const avail = await CapSpeechRecognition.available();
+        if (!avail.available) {
+          throw new Error('Native speech recognition is not available on this Android device.');
+        }
+
+        this.isListening = true;
+        this.sessionDuration = 0;
+        this.sessionTimerInterval = setInterval(() => {
+          this.sessionDuration += 1;
+        }, 1000);
+
+        eventBus.emit('state', { state: 'listening', detail: 'Listening via Android Native Speech...' });
+        eventBus.emit('log', { text: '[Voice] Listening via Android Native Speech Recognition', level: 'info' });
+
+        // Listen for partial or final results
+        CapSpeechRecognition.addListener('partialResults', (data: { matches: string[] }) => {
+          if (data.matches && data.matches.length > 0) {
+            const transcript = data.matches[0];
+            eventBus.emit('state', { state: 'listening', detail: `"${transcript}"` });
+          }
+        });
+
+        // Start native listening
+        await CapSpeechRecognition.start({
+          language: 'en-US',
+          maxResults: 2,
+          prompt: 'Speak your command to JEXA',
+          partialResults: true,
+          popup: false,
+        });
+
+        // Mock breathing audio level while native engine listens
+        const updateMockLevel = () => {
+          if (!this.isListening) return;
+          this.audioLevel = 0.3 + 0.3 * Math.sin(Date.now() / 200);
+          this.levelAnimFrame = requestAnimationFrame(updateMockLevel);
+        };
+        updateMockLevel();
+        return;
+      } catch (err: any) {
+        this.stop();
+        eventBus.emit('log', {
+          text: `[Voice Error] ${err.message || 'Capacitor speech recognition failed'}`,
+          level: 'error',
+        });
+        eventBus.emit('message', {
+          role: 'system',
+          text: err.message || 'Microphone permission denied.',
+        });
+        throw err;
+      }
+    }
+
+    // 2. Web Browser Fallback: Web Speech API + Web Audio Analyser
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      throw new Error('Web Speech API is not supported in this browser.');
+      throw new Error('Speech Recognition is not supported in this browser. Please use Gemini Live or Chrome.');
     }
 
-    // 1. Microphone Analyser for real audio levels
+    // Microphone Analyser for real audio levels
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -56,7 +139,6 @@ export class BrowserSpeechEngine implements SpeechEngine {
       // Audio level fallback
     }
 
-    // 2. Speech Recognition
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = true;
     this.recognition.interimResults = true;
@@ -117,6 +199,14 @@ export class BrowserSpeechEngine implements SpeechEngine {
       cancelAnimationFrame(this.levelAnimFrame);
       this.levelAnimFrame = null;
     }
+
+    if (this.isCapacitor) {
+      try {
+        await CapSpeechRecognition.stop();
+        await CapSpeechRecognition.removeAllListeners();
+      } catch {}
+    }
+
     if (this.recognition) {
       try {
         this.recognition.stop();
