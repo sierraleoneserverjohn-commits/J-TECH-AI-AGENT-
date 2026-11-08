@@ -5,69 +5,50 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # Capacitor 7 & AGP 8 require Java 21
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '21'
+          distribution: temurin
+          java-version: 21
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build web application
+      - name: Build web app
         run: npm run build
 
-      - name: Add Capacitor Android platform if missing
+      - name: Create fresh Android project
         run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
+          rm -rf android
+          npx cap add android
+          npx cap sync android
 
-      - name: Patch AndroidManifest.xml (Landscape sensor and Audio/Network permissions)
+      - name: Patch Android manifest
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            # 1. Add permissions if missing
-            for PERM in "android.permission.RECORD_AUDIO" "android.permission.MODIFY_AUDIO_SETTINGS" "android.permission.INTERNET"; do
-              if ! grep -q "$PERM" "$MANIFEST"; then
-                sed -i "/<manifest/a \    <uses-permission android:name=\"$PERM\" />" "$MANIFEST"
-              fi
-            done
-            # 2. Add screenOrientation="sensorLandscape" to MainActivity
-            if grep -q "activity android:name=\"\.MainActivity\"" "$MANIFEST"; then
-              sed -i 's/activity android:name="\.MainActivity"/activity android:name="\.MainActivity" android:screenOrientation="sensorLandscape"/g' "$MANIFEST"
-            fi
-          fi
+          M=android/app/src/main/AndroidManifest.xml
+          sed -i '0,/<activity/s|<activity|<activity android:screenOrientation="sensorLandscape"|' $M
+          sed -i 's|</manifest>|    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n</manifest>|' $M
 
-      - name: Sync Capacitor Android
-        run: npx cap sync android
-
-      - name: Build Android Debug APK
+      - name: Build debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug
 
-      - name: Upload Debug APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: jexa-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
-          retention-days: 14
