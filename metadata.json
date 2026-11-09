@@ -1,6 +1,6 @@
 {
   "name": "JEXA — Personal AI Command Centre",
   "description": "Landscape-first futuristic personal AI command centre with a responsive voice orb, live connection topology, swappable brain architecture, and real-time event bus.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

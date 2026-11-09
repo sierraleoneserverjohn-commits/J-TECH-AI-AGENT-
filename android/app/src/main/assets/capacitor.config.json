@@ -2,7 +2,12 @@
 	"appId": "com.jtech.jexa",
 	"appName": "JEXA",
 	"webDir": "dist",
+	"backgroundColor": "#05080f",
 	"server": {
 		"androidScheme": "https"
+	},
+	"android": {
+		"backgroundColor": "#05080f",
+		"allowMixedContent": true
 	}
 }

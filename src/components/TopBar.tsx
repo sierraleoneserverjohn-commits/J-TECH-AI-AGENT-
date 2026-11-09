@@ -9,7 +9,10 @@ import {
   Minimize2,
   Eye,
   Radio,
+  Mic,
+  MicOff,
 } from 'lucide-react';
+import { speechManager } from '../voice/SpeechEngineManager';
 
 interface TopBarProps {
   deviceData: DeviceData;
@@ -28,6 +31,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const [timeStr, setTimeStr] = useState<string>('');
   const [dateStr, setDateStr] = useState<string>('');
+  const [isMuted, setMutedState] = useState<boolean>(() => speechManager.isMuted());
 
   useEffect(() => {
     const updateTime = () => {
@@ -57,10 +61,9 @@ export const TopBar: React.FC<TopBarProps> = ({
     <header className="h-10 px-3 md:px-4 flex items-center justify-between border-b border-cyan-950/80 bg-[#040914]/90 backdrop-blur-xl shrink-0 z-40 select-none font-mono">
       {/* Left: JEXA logo (glowing ring) with tagline */}
       <div className="flex items-center gap-2.5">
-        {/* Glowing ring icon */}
+        {/* JEXA SVG Logo */}
         <div className="relative w-6 h-6 flex items-center justify-center">
-          <div className="absolute inset-0 rounded-full border-2 border-cyan-400 shadow-[0_0_10px_#00f0ff] animate-pulse" />
-          <div className="w-2.5 h-2.5 rounded-full bg-cyan-300 shadow-[0_0_8px_#00f0ff]" />
+          <img src="/favicon.svg" alt="JEXA" className="w-6 h-6 drop-shadow-[0_0_8px_#00f0ff]" />
         </div>
 
         <div className="flex flex-col">
@@ -80,8 +83,32 @@ export const TopBar: React.FC<TopBarProps> = ({
         </span>
       </div>
 
-      {/* Right: Live Clock & Date, Wi-Fi, Battery, Focus Mode, Fullscreen, Settings */}
-      <div className="flex items-center gap-3 text-xs">
+      {/* Right: Persistent Mic & Mute, Live Clock, Wi-Fi, Battery, Focus Mode, Fullscreen, Settings */}
+      <div className="flex items-center gap-2.5 text-xs">
+        {/* Persistent Visible Mic Indicator & One-Tap Hard Mute */}
+        <button
+          onClick={() => {
+            const muted = speechManager.toggleMute();
+            setMutedState(muted);
+          }}
+          title={isMuted ? 'Microphone is Hard Muted (Click to Unmute)' : 'Microphone is Active (Click to Hard Mute)'}
+          aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+          className={`flex items-center gap-1.5 px-2 py-1 rounded-md border min-h-[36px] transition-all ${
+            isMuted
+              ? 'bg-rose-950/50 border-rose-500/60 text-rose-300 hover:bg-rose-900/60 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
+              : 'bg-cyan-950/40 border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/50'
+          }`}
+        >
+          {isMuted ? (
+            <MicOff className="w-3.5 h-3.5 text-rose-400" />
+          ) : (
+            <Mic className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+          )}
+          <span className="text-[9.5px] font-bold uppercase tracking-wider hidden sm:inline">
+            {isMuted ? 'Muted' : 'Mic Live'}
+          </span>
+        </button>
+
         {/* Clock & Date */}
         <div className="flex items-center gap-1.5 text-slate-300 text-[11px]">
           <span className="text-cyan-400 font-semibold">{timeStr}</span>

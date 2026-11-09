@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#0a182c"/>
+      <stop offset="60%" stop-color="#05080f"/>
+      <stop offset="100%" stop-color="#020408"/>
+    </radialGradient>
+    <linearGradient id="cyanEnergy" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f3ff"/>
+      <stop offset="50%" stop-color="#00a8ff"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <radialGradient id="orbGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="30%" stop-color="#67e8f9"/>
+      <stop offset="70%" stop-color="#00f3ff"/>
+      <stop offset="100%" stop-color="#0066cc" stop-opacity="0.2"/>
+    </radialGradient>
+    <filter id="neonGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur1"/>
+      <feGaussianBlur stdDeviation="18" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="orbPulse" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGlow)"/>
+  <circle cx="256" cy="256" r="216" fill="none" stroke="#00f3ff" stroke-width="2" stroke-opacity="0.15" stroke-dasharray="6 8"/>
+  <circle cx="256" cy="256" r="156" fill="none" stroke="url(#cyanEnergy)" stroke-width="16" stroke-linecap="round" filter="url(#neonGlow)"/>
+  <path d="M 296 148 L 296 308 C 296 358 262 384 218 384 C 182 384 156 362 148 334" fill="none" stroke="url(#cyanEnergy)" stroke-width="20" stroke-linecap="round" filter="url(#neonGlow)"/>
+  <path d="M 264 148 L 328 148" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" filter="url(#neonGlow)"/>
+  <circle cx="220" cy="240" r="34" fill="url(#orbGlow)" filter="url(#orbPulse)"/>
+  <circle cx="220" cy="240" r="14" fill="#ffffff"/>
+  <circle cx="390" cy="200" r="7" fill="#00f3ff" filter="url(#neonGlow)"/>
+  <circle cx="120" cy="290" r="6" fill="#38bdf8" filter="url(#neonGlow)"/>
+  <circle cx="256" cy="100" r="5" fill="#67e8f9" filter="url(#neonGlow)"/>
+</svg>

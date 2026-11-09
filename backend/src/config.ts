@@ -50,7 +50,7 @@ export const config: AppConfig = {
   groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
   
   geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   geminiLiveModel: process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live',
   
   openRouterApiKey: process.env.OPENROUTER_API_KEY || '',

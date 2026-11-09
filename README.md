@@ -93,8 +93,8 @@ Set these variables in the Render Dashboard (**Environment** tab):
   https://<your-username>.github.io,https://localhost,capacitor://localhost
   ```
 - `GEMINI_API_KEY`: Google AI Studio Gemini API Key.
-- `GEMINI_MODEL`: Model name (e.g. `gemini-2.0-flash`).
-- `GEMINI_LIVE_MODEL`: Real-time voice model (e.g. `gemini-3.8-live`).
+- `GEMINI_MODEL`: Chat model name. **Recommended**: `gemini-3.8-flash` (or `gemini-3.5-flash-lite` for ultra-fast execution). *Note: `gemini-2.0-flash` and `gemini-1.5-*` are deprecated.*
+- `GEMINI_LIVE_MODEL`: Real-time bidirectional voice model. **Recommended**: `gemini-3.8-live` (fallback: `gemini-3.1-flash-live-preview`).
 - `GROQ_API_KEY`: Groq API Key.
 - `GROQ_MODEL`: Model name (e.g. `llama-3.3-70b-versatile`).
 - `OPENROUTER_API_KEY`: OpenRouter API Key.

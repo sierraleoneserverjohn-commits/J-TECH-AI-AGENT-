@@ -2,8 +2,8 @@
 
 @layer base {
   :root {
-    --bg-dark: #030712;
-    --panel-bg: rgba(6, 14, 28, 0.82);
+    --bg-dark: #05080f;
+    --panel-bg: rgba(5, 11, 22, 0.85);
     --jexa-accent: #00f0ff;
     --jexa-accent-glow: rgba(0, 240, 255, 0.4);
     --jexa-accent-soft: rgba(0, 240, 255, 0.15);
@@ -13,15 +13,26 @@
     --ice-glow: var(--jexa-accent-glow);
   }
 
-  body {
-    background-color: var(--bg-dark);
+  html, body, #root {
+    background-color: #05080f;
     color: #e2e8f0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
-    height: 100vh;
-    width: 100vw;
+    height: 100dvh;
+    min-height: 100dvh;
+    width: 100dvw;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Safe Area Insets for Edge-to-Edge Full Screen Cutout */
+  body {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
 
   /* Custom scrollbar for HUD panels */
@@ -41,46 +52,29 @@
   }
 }
 
-/* Futuristic Cityscape and Grid Backdrop */
-.jexa-backdrop {
-  background-color: #030712;
-  background-image: 
-    /* Horizon neon skyline gradient */
-    radial-gradient(circle at 50% 65%, var(--jexa-accent-soft) 0%, transparent 65%),
-    radial-gradient(circle at 20% 80%, rgba(37, 99, 235, 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(14, 165, 233, 0.08) 0%, transparent 50%),
-    /* Cyberpunk perspective horizontal lines */
-    linear-gradient(to bottom, transparent 60%, var(--jexa-accent-soft) 60%, rgba(0, 240, 255, 0.06) 100%),
-    /* Digital grid overlay */
-    linear-gradient(to right, rgba(0, 240, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 28px 28px, 28px 28px;
+/* Perspective Grid Floor Drift Animation */
+@keyframes grid-drift {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 48px;
+  }
 }
 
-/* Faint cityscape silhouette */
-.cityscape-silhouette {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 140px;
-  pointer-events: none;
-  opacity: 0.18;
-  background-repeat: repeat-x;
-  background-position: bottom center;
-  background-size: 600px 140px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 140' preserveAspectRatio='none'%3E%3Cpath fill='%2300f0ff' fill-opacity='0.5' d='M0,140 L0,105 L25,105 L25,85 L35,85 L35,105 L55,105 L55,70 L75,70 L75,60 L80,60 L80,105 L110,105 L110,50 L125,50 L125,40 L130,15 L135,40 L135,105 L160,105 L160,75 L180,75 L180,95 L205,95 L205,65 L225,65 L225,55 L240,55 L240,105 L270,105 L270,45 L290,45 L290,105 L315,105 L315,80 L335,80 L335,105 L360,105 L360,60 L385,60 L385,30 L390,30 L390,105 L420,105 L420,70 L445,70 L445,90 L465,90 L465,55 L485,55 L485,105 L510,105 L510,75 L530,75 L530,95 L555,95 L555,60 L575,60 L575,105 L600,105 L600,140 Z'/%3E%3C/svg%3E");
+.animate-grid-drift {
+  animation: grid-drift 4s linear infinite;
 }
 
 /* Cyberpunk Angled Corner HUD Panel Container */
 .hud-corner-box {
-  background: rgba(6, 14, 28, 0.85);
+  background: rgba(5, 11, 22, 0.88);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--jexa-accent-soft);
   box-shadow: 
     inset 0 0 12px var(--jexa-accent-soft),
-    0 4px 18px rgba(0, 0, 0, 0.55);
+    0 4px 18px rgba(0, 0, 0, 0.65);
   position: relative;
 }
 

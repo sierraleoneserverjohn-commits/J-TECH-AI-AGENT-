@@ -6,6 +6,8 @@ export type VoiceProviderType = 'gemini_live' | 'browser_speech';
 
 export type LiveVoiceName = 'Zephyr' | 'Puck' | 'Charon' | 'Kore' | 'Fenrir';
 
+export type VoiceMode = 'tap' | 'always' | 'wake';
+
 export interface SpeechSessionOptions {
   voiceName?: LiveVoiceName;
   modelName?: string;

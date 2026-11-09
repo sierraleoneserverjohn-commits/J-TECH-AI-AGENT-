@@ -19,6 +19,8 @@ import { EdgeDrawerHandle } from './components/EdgeDrawerHandle';
 import { CommandPaletteModal } from './components/CommandPaletteModal';
 import { AmbientModeOverlay } from './components/AmbientModeOverlay';
 import { VisionPanelModal } from './components/VisionPanelModal';
+import { LivingDepthBackground } from './components/LivingDepthBackground';
+import { FirstLaunchModal } from './components/FirstLaunchModal';
 import { getSavedTheme, applyTheme } from './utils/theme';
 import { Eye, EyeOff } from 'lucide-react';
 
@@ -85,6 +87,12 @@ export default function App() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isVisionOpen, setIsVisionOpen] = useState<boolean>(false);
   const [allowPortraitPreview, setAllowPortraitPreview] = useState<boolean>(false);
+  const [isFirstLaunchOpen, setIsFirstLaunchOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const hasUrl = Boolean(localStorage.getItem('jexa_backend_url'));
+    const dismissed = localStorage.getItem('jexa_setup_dismissed') === 'true';
+    return !hasUrl && !dismissed;
+  });
 
   // Ambient Mode: 60 seconds idle detection
   const [isAmbientMode, setIsAmbientMode] = useState<boolean>(false);
@@ -204,9 +212,9 @@ export default function App() {
     .reverse();
 
   return (
-    <div className="relative w-screen h-[100dvh] overflow-hidden jexa-backdrop text-slate-100 flex flex-col select-none font-sans">
-      {/* Cityscape skyline silhouette at bottom */}
-      <div className="cityscape-silhouette" />
+    <div className="relative w-screen h-[100dvh] overflow-hidden bg-[#05080f] text-slate-100 flex flex-col select-none font-sans">
+      {/* Living Depth Background with moving perspective grid, drifting dust, and state-reactive aurora */}
+      <LivingDepthBackground state={orbState} />
 
       {/* 1. Orientation Lock Overlay for Portrait mode */}
       {!allowPortraitPreview && (
@@ -357,6 +365,16 @@ export default function App() {
       <AmbientModeOverlay
         isAmbient={isAmbientMode}
         onWake={resetIdleTimer}
+      />
+
+      {/* First-Launch Onboarding & Connection Setup Modal */}
+      <FirstLaunchModal
+        isOpen={isFirstLaunchOpen}
+        onConnected={() => {
+          setIsFirstLaunchOpen(false);
+          refreshBackendStatus();
+        }}
+        onDismiss={() => setIsFirstLaunchOpen(false)}
       />
     </div>
   );

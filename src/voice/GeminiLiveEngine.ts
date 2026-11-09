@@ -1,8 +1,9 @@
-import { SpeechEngine, SpeechSessionOptions, LiveVoiceName } from './types';
+import { SpeechEngine, SpeechSessionOptions, LiveVoiceName, VoiceMode } from './types';
 import { floatTo16BitPCMBase64, base64ToAudioBuffer, getNormalizedAudioLevel } from './audioUtils';
 import { eventBus } from '../events/eventBus';
 import { toolRegistry } from '../tools';
 import { ApiClient } from '../api/client';
+import { enableKeepAwake, disableKeepAwake } from './keepAwake';
 
 export const CONFIG_LIVE_MODEL = 'gemini-3.8-live';
 
@@ -18,8 +19,10 @@ export class GeminiLiveEngine implements SpeechEngine {
   public id = 'gemini_live' as const;
   public name = 'Gemini Live (Real-Time Voice)';
   public isListening = false;
+  public isMuted = false;
   public audioLevel = 0;
   public sessionDuration = 0;
+  public mode: VoiceMode = 'tap';
 
   private ws: WebSocket | null = null;
   private inputAudioCtx: AudioContext | null = null;
@@ -34,6 +37,16 @@ export class GeminiLiveEngine implements SpeechEngine {
   private sessionTimerInterval: NodeJS.Timeout | null = null;
   private levelAnimFrame: number | null = null;
   private selectedVoice: LiveVoiceName = 'Zephyr';
+  private activeModel: string = CONFIG_LIVE_MODEL;
+
+  // VAD & Silence Management
+  private lastSpeechTimestamp = Date.now();
+  private vadSilenceTimer: NodeJS.Timeout | null = null;
+  private isSpeechActive = false;
+  private speechHangoverMs = 1500;
+  private isModelSpeaking = false;
+  private reconnectAttempts = 0;
+  private isReconnecting = false;
 
   public async isAvailable(): Promise<boolean> {
     if (typeof window === 'undefined' || !window.WebSocket) return false;
@@ -50,29 +63,78 @@ export class GeminiLiveEngine implements SpeechEngine {
     return ApiClient.post<LiveTokenResponse>('/live-token');
   }
 
+  public setMode(newMode: VoiceMode): void {
+    this.mode = newMode;
+    localStorage.setItem('jexa_voice_mode', newMode);
+    eventBus.emit('log', {
+      text: `[Voice Mode] Switched to ${newMode === 'always' ? 'Always Listening (VAD active)' : newMode === 'wake' ? 'Wake Phrase ("Hey JEXA")' : 'Tap to Talk'}`,
+      level: 'info',
+    });
+  }
+
+  public toggleMute(): boolean {
+    this.isMuted = !this.isMuted;
+    if (this.micStream) {
+      this.micStream.getAudioTracks().forEach((track) => {
+        track.enabled = !this.isMuted;
+      });
+    }
+
+    eventBus.emit('log', {
+      text: this.isMuted ? '[Voice Engine] Microphone hard-muted' : '[Voice Engine] Microphone unmuted',
+      level: this.isMuted ? 'warn' : 'info',
+    });
+    eventBus.emit('activity', {
+      id: 'mic-mute',
+      label: this.isMuted ? 'Mic Muted' : 'Mic Live',
+      active: this.isMuted,
+    });
+
+    return this.isMuted;
+  }
+
   public async start(options?: SpeechSessionOptions): Promise<void> {
-    if (this.isListening) return;
+    if (this.isListening && !this.isReconnecting) return;
 
     if (!ApiClient.isConnected()) {
       throw new Error('Backend not connected. Configure your backend URL in Settings.');
     }
 
-    if (options?.voiceName) {
-      this.selectedVoice = options.voiceName;
+    const savedVoice = (localStorage.getItem('jexa_live_voice') as LiveVoiceName) || 'Zephyr';
+    this.selectedVoice = options?.voiceName || savedVoice;
+
+    const savedModel = localStorage.getItem('jexa_live_model') || CONFIG_LIVE_MODEL;
+    this.activeModel = options?.modelName || savedModel;
+
+    this.mode = (localStorage.getItem('jexa_voice_mode') as VoiceMode) || 'tap';
+
+    // Activate keep-awake if in always or wake mode
+    if (this.mode === 'always' || this.mode === 'wake') {
+      await enableKeepAwake();
     }
 
     eventBus.emit('log', {
-      text: `[Gemini Live] Requesting ephemeral session for voice "${this.selectedVoice}"...`,
+      text: `[Gemini Live] Initiating session with voice "${this.selectedVoice}" and model "${this.activeModel}"...`,
       level: 'info',
     });
 
-    const tokenConfig = await this.getLiveToken();
-    const modelToUse = options?.modelName || tokenConfig.model || CONFIG_LIVE_MODEL;
+    let tokenConfig: LiveTokenResponse;
+    try {
+      tokenConfig = await this.getLiveToken();
+    } catch (tokenErr: any) {
+      throw new Error(`Failed to initialize Live token: ${tokenErr.message}`);
+    }
+
+    const modelToUse = options?.modelName || tokenConfig.model || this.activeModel;
 
     // 1. Setup AudioContexts (16kHz capture, 24kHz playback)
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
-    this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+    if (!this.inputAudioCtx || this.inputAudioCtx.state === 'closed') {
+      this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
+    }
+    if (!this.outputAudioCtx || this.outputAudioCtx.state === 'closed') {
+      this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+    }
 
     if (this.inputAudioCtx.state === 'suspended') await this.inputAudioCtx.resume();
     if (this.outputAudioCtx.state === 'suspended') await this.outputAudioCtx.resume();
@@ -80,25 +142,34 @@ export class GeminiLiveEngine implements SpeechEngine {
     // Setup Analysers
     this.micAnalyser = this.inputAudioCtx.createAnalyser();
     this.micAnalyser.fftSize = 256;
+    this.micAnalyser.smoothingTimeConstant = 0.3;
 
     this.outputAnalyser = this.outputAudioCtx.createAnalyser();
     this.outputAnalyser.fftSize = 256;
+    this.outputAnalyser.smoothingTimeConstant = 0.3;
 
-    // 2. Capture Microphone Stream with permission handling
+    // 2. Capture Microphone Stream with echo cancellation and auto gain
     try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
+      if (!this.micStream) {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      }
+      if (this.isMuted) {
+        this.micStream.getAudioTracks().forEach((track) => (track.enabled = false));
+      }
     } catch (micErr: any) {
       this.cleanup();
-      const msg = micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError'
-        ? 'Microphone permission denied. Please allow microphone access in your browser or device settings.'
-        : `Microphone error: ${micErr.message || 'Cannot access audio input'}`;
+      const msg =
+        micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError'
+          ? 'Microphone permission denied. Please allow microphone access in device settings.'
+          : `Microphone error: ${micErr.message || 'Cannot access audio input'}`;
       eventBus.emit('log', { text: `[Gemini Live] ${msg}`, level: 'error' });
       eventBus.emit('message', { role: 'system', text: msg });
       throw new Error(msg);
@@ -111,9 +182,7 @@ export class GeminiLiveEngine implements SpeechEngine {
     source.connect(this.processor);
     this.processor.connect(this.inputAudioCtx.destination);
 
-    // 3. Connect directly to Gemini Multimodal Live API via WebSockets using ephemeral token
-    // If an ephemeral token was created by the backend, connect directly to Google's live endpoint
-    // otherwise fallback to backend proxy if available
+    // 3. Connect to Gemini Multimodal Live API via WebSockets
     const token = tokenConfig.token;
     const wsUrl = token
       ? `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(token)}`
@@ -123,13 +192,17 @@ export class GeminiLiveEngine implements SpeechEngine {
 
     this.ws.onopen = () => {
       this.isListening = true;
+      this.isReconnecting = false;
+      this.reconnectAttempts = 0;
       this.sessionDuration = 0;
+      this.lastSpeechTimestamp = Date.now();
 
+      if (this.sessionTimerInterval) clearInterval(this.sessionTimerInterval);
       this.sessionTimerInterval = setInterval(() => {
         this.sessionDuration += 1;
       }, 1000);
 
-      // Direct client setup payload matching Gemini Live API
+      // System instruction: concise, calm, confirms briefly ("Done, sir.")
       const setupMsg = {
         setup: {
           model: `models/${modelToUse}`,
@@ -146,7 +219,7 @@ export class GeminiLiveEngine implements SpeechEngine {
           systemInstruction: {
             parts: [
               {
-                text: 'You are JEXA (JARVIS-class Executive Autonomous Intelligence), a calm, razor-sharp personal AI command centre operating in real-time voice mode. Keep responses concise and conversational.',
+                text: 'You are JEXA (JARVIS-class Executive Autonomous Intelligence), a calm, razor-sharp personal AI command centre operating in real-time voice mode. Be concise, calm, and confirm briefly ("Done, sir."). Keep answers under two short sentences unless depth is requested.',
               },
             ],
           },
@@ -163,12 +236,56 @@ export class GeminiLiveEngine implements SpeechEngine {
       eventBus.emit('activity', { id: 'live-voice', label: 'Gemini Live Session', active: true });
     };
 
-    // 4. Stream 16kHz PCM audio
+    // 4. Stream 16kHz PCM audio with local VAD & self-suppression
     this.processor.onaudioprocess = (e) => {
-      if (!this.isListening || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-      const inputData = e.inputBuffer.getChannelData(0);
-      const base64Pcm = floatTo16BitPCMBase64(inputData);
+      if (!this.isListening || this.isMuted) return;
 
+      const inputData = e.inputBuffer.getChannelData(0);
+
+      // Calculate Root Mean Square energy for local VAD
+      let sumSquares = 0;
+      for (let i = 0; i < inputData.length; i++) {
+        sumSquares += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sumSquares / inputData.length);
+      const isSpeechNow = rms > 0.018;
+
+      if (isSpeechNow) {
+        this.lastSpeechTimestamp = Date.now();
+        this.isSpeechActive = true;
+      } else if (Date.now() - this.lastSpeechTimestamp > this.speechHangoverMs) {
+        this.isSpeechActive = false;
+      }
+
+      // Barge-in: If model is currently speaking and user speaks loud, interrupt immediately
+      if (this.isModelSpeaking && rms > 0.045) {
+        this.stopPlayback();
+        this.isModelSpeaking = false;
+        eventBus.emit('state', { state: 'listening', detail: 'Barge-in interruption' });
+      }
+
+      // Suppress self-listening during model playback to prevent echo loops
+      if (this.isModelSpeaking) {
+        return;
+      }
+
+      // Always mode auto-pause after 60s silence to preserve free tier quota
+      if (this.mode === 'always') {
+        const silentSeconds = (Date.now() - this.lastSpeechTimestamp) / 1000;
+        if (silentSeconds > 60 && this.isListening) {
+          eventBus.emit('log', {
+            text: '[Gemini Live] 60s silence elapsed in Always-Listening mode. Standby sleep active to save quota.',
+            level: 'info',
+          });
+          this.pauseForSilence();
+          return;
+        }
+      }
+
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+      // Send PCM chunk
+      const base64Pcm = floatTo16BitPCMBase64(inputData);
       const audioMsg = {
         realtimeInput: {
           mediaChunks: [
@@ -194,10 +311,11 @@ export class GeminiLiveEngine implements SpeechEngine {
           msg = JSON.parse(event.data);
         }
 
-        // Interruption
+        // Server Interruption notice
         if (msg.serverContent?.interrupted) {
           this.stopPlayback();
-          eventBus.emit('state', { state: 'listening', detail: 'User interruption detected' });
+          this.isModelSpeaking = false;
+          eventBus.emit('state', { state: 'listening', detail: 'Interrupted' });
           return;
         }
 
@@ -205,6 +323,7 @@ export class GeminiLiveEngine implements SpeechEngine {
         const parts = msg.serverContent?.modelTurn?.parts || [];
         for (const part of parts) {
           if (part.inlineData?.data) {
+            this.isModelSpeaking = true;
             eventBus.emit('state', { state: 'speaking', detail: 'Gemini Live speaking...' });
             this.scheduleAudioChunk(part.inlineData.data);
           }
@@ -217,7 +336,7 @@ export class GeminiLiveEngine implements SpeechEngine {
           }
         }
 
-        // User speech transcription if present
+        // User speech transcription
         for (const part of msg.serverContent?.userTurn?.parts ?? []) {
           if (part.text) {
             eventBus.emit('message', {
@@ -228,13 +347,14 @@ export class GeminiLiveEngine implements SpeechEngine {
           }
         }
 
-        // Tool function calls
+        // Function Calls
         for (const call of msg.toolCall?.functionCalls ?? []) {
           const { id, name, args } = call;
           eventBus.emit('log', {
             text: `[Gemini Live] Invoking tool through live function calling: ${name}`,
             level: 'info',
           });
+          eventBus.emit('state', { state: 'running_tools', detail: `Executing ${name}` });
 
           const toolInput = typeof args === 'string' ? args : JSON.stringify(args || {});
           const toolResult = await toolRegistry.executeTool(name, toolInput);
@@ -256,13 +376,18 @@ export class GeminiLiveEngine implements SpeechEngine {
           }
         }
 
-        // Direct error
+        // Direct error from Gemini Live
         if (msg.error) {
           const errMsg = msg.error.message || JSON.stringify(msg.error);
           eventBus.emit('log', { text: `[Gemini Live Error] ${errMsg}`, level: 'error' });
           if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
             eventBus.emit('provider', { name: 'Gemini', status: 'error', error: 'Live quota reached' });
           }
+        }
+
+        // Server GoAway or session limit notification
+        if (msg.goAway || (msg.serverContent && msg.serverContent.endOfTurn && this.sessionDuration > 540)) {
+          this.handleReconnection();
         }
       } catch (e) {
         console.error('Error parsing live WS message:', e);
@@ -272,15 +397,22 @@ export class GeminiLiveEngine implements SpeechEngine {
     this.ws.onerror = (e) => {
       console.warn('[Gemini Live] WebSocket error:', e);
       eventBus.emit('log', {
-        text: '[Gemini Live] WebSocket connection encountered an issue.',
+        text: '[Gemini Live] WebSocket connection encountered a transient issue.',
         level: 'warn',
       });
     };
 
-    this.ws.onclose = () => {
-      this.cleanup();
-      eventBus.emit('state', { state: 'idle' });
-      eventBus.emit('activity', { id: 'live-voice', label: 'Gemini Live Session', active: false });
+    this.ws.onclose = (e) => {
+      if (this.isReconnecting) return;
+
+      // Auto-reconnect if session closed unexpectedly while always-listening
+      if (this.mode === 'always' && !this.isMuted && this.reconnectAttempts < 3 && e.code !== 1000) {
+        this.handleReconnection();
+      } else {
+        this.cleanup();
+        eventBus.emit('state', { state: 'idle' });
+        eventBus.emit('activity', { id: 'live-voice', label: 'Gemini Live Session', active: false });
+      }
     };
 
     // 6. Monitor real audio levels using AnalyserNode
@@ -290,7 +422,7 @@ export class GeminiLiveEngine implements SpeechEngine {
       let level = 0;
       if (this.outputAnalyser && this.activeSources.length > 0) {
         level = getNormalizedAudioLevel(this.outputAnalyser);
-      } else if (this.micAnalyser) {
+      } else if (this.micAnalyser && !this.isMuted) {
         level = getNormalizedAudioLevel(this.micAnalyser);
       }
 
@@ -299,6 +431,46 @@ export class GeminiLiveEngine implements SpeechEngine {
     };
 
     updateAudioLevel();
+  }
+
+  private handleReconnection(): void {
+    if (this.isReconnecting) return;
+    this.isReconnecting = true;
+    this.reconnectAttempts += 1;
+
+    eventBus.emit('state', { state: 'thinking', detail: 'Reconnecting Live session...' });
+    eventBus.emit('log', {
+      text: `[Gemini Live] Reconnecting session (attempt ${this.reconnectAttempts}/3)...`,
+      level: 'warn',
+    });
+
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+
+    setTimeout(() => {
+      if (this.isListening || this.mode === 'always') {
+        this.start().catch((err) => {
+          this.isReconnecting = false;
+          console.warn('[Gemini Live] Reconnection attempt failed:', err);
+        });
+      }
+    }, 1500);
+  }
+
+  private pauseForSilence(): void {
+    if (this.ws) {
+      try {
+        this.ws.close(1000, 'Idle silence');
+      } catch {}
+      this.ws = null;
+    }
+    this.isListening = false;
+    eventBus.emit('state', { state: 'idle', detail: 'VAD standby (listening for voice)' });
+    eventBus.emit('activity', { id: 'live-voice', label: 'Gemini Live Standby', active: false });
   }
 
   private scheduleAudioChunk(base64: string): void {
@@ -328,8 +500,11 @@ export class GeminiLiveEngine implements SpeechEngine {
       source.onended = () => {
         const index = this.activeSources.indexOf(source);
         if (index > -1) this.activeSources.splice(index, 1);
-        if (this.activeSources.length === 0 && this.isListening) {
-          eventBus.emit('state', { state: 'listening', detail: 'Listening Live...' });
+        if (this.activeSources.length === 0) {
+          this.isModelSpeaking = false;
+          if (this.isListening) {
+            eventBus.emit('state', { state: 'listening', detail: 'Listening Live...' });
+          }
         }
       };
     } catch (e) {
@@ -345,6 +520,7 @@ export class GeminiLiveEngine implements SpeechEngine {
       } catch {}
     });
     this.activeSources = [];
+    this.isModelSpeaking = false;
     if (this.outputAudioCtx) {
       this.nextStartTime = this.outputAudioCtx.currentTime;
     }
@@ -352,18 +528,24 @@ export class GeminiLiveEngine implements SpeechEngine {
 
   public async stop(): Promise<void> {
     this.cleanup();
+    await disableKeepAwake();
     eventBus.emit('state', { state: 'idle' });
     eventBus.emit('log', { text: '[Gemini Live] Session ended by user.', level: 'info' });
   }
 
   private cleanup(): void {
     this.isListening = false;
+    this.isReconnecting = false;
     this.audioLevel = 0;
     this.stopPlayback();
 
     if (this.sessionTimerInterval) {
       clearInterval(this.sessionTimerInterval);
       this.sessionTimerInterval = null;
+    }
+    if (this.vadSilenceTimer) {
+      clearTimeout(this.vadSilenceTimer);
+      this.vadSilenceTimer = null;
     }
     if (this.levelAnimFrame) {
       cancelAnimationFrame(this.levelAnimFrame);

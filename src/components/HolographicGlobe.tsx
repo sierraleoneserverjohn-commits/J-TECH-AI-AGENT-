@@ -4,6 +4,7 @@ import { ActivityChip, ActiveProviderUsage } from '../events/useJexaStore';
 import { Mic, MicOff, AlertCircle, Sparkles, Activity, Server, Database, Globe, Wrench } from 'lucide-react';
 import { triggerHaptic } from '../utils/haptics';
 import { playSciFiSound } from '../utils/soundCues';
+import { ThreeHolographicOrb } from './ThreeHolographicOrb';
 
 interface HolographicGlobeProps {
   state: OrbState;
@@ -637,12 +638,13 @@ export const HolographicGlobe: React.FC<HolographicGlobeProps> = ({
         })}
       </div>
 
-      {/* 2. HOLOGRAPHIC CANVAS AREA */}
+      {/* 2. HOLOGRAPHIC THREE.JS WEBGL CORE ORB */}
       <div className="relative flex-1 flex items-center justify-center min-h-[165px] max-h-[210px] w-full">
-        <canvas
-          ref={canvasRef}
-          style={{ width: `${width}px`, height: `${height}px` }}
-          className="pointer-events-none"
+        <ThreeHolographicOrb
+          state={state}
+          audioLevel={audioLevel}
+          width={width}
+          height={height}
         />
       </div>
 

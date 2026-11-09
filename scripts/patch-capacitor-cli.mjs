@@ -4,8 +4,9 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, '..');
 
-const targetFile = path.resolve(__dirname, 'node_modules/@capacitor/cli/dist/util/node.js');
+const targetFile = path.resolve(rootDir, 'node_modules/@capacitor/cli/dist/util/node.js');
 
 if (fs.existsSync(targetFile)) {
   const content = `"use strict";
@@ -41,4 +42,7 @@ function resolveNode(root, ...pathSegments) {
 exports.resolveNode = resolveNode;
 `;
   fs.writeFileSync(targetFile, content, 'utf8');
+  console.log('Successfully patched Capacitor CLI node.js loader');
+} else {
+  console.warn('Could not find', targetFile);
 }
