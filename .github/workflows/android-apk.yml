@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 20
 
-      # Capacitor 7 & AGP 8 require Java 21
+      # Capacitor 7 and AGP 8 require Java 21
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
@@ -34,32 +34,33 @@ jobs:
       - name: Build web application
         run: npm run build
 
-      - name: Add Capacitor Android platform if missing
+      # Always create a fresh Android project so a half-empty folder can never break the build
+      - name: Create fresh Android project
         run: |
-          if [ ! -d "android" ]; then
-            npx cap add android
-          fi
+          rm -rf android
+          npx cap add android
+          ls android
 
       - name: Generate App Icons and Android Splash Assets
         run: |
           node scripts/make-icons.mjs
           npx @capacitor/assets generate --android
 
-      - name: Patch AndroidManifest.xml (Landscape sensor and Audio/Network permissions)
+      - name: Patch AndroidManifest.xml (landscape and permissions)
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            # 1. Add permissions if missing
-            for PERM in "android.permission.RECORD_AUDIO" "android.permission.MODIFY_AUDIO_SETTINGS" "android.permission.INTERNET"; do
-              if ! grep -q "$PERM" "$MANIFEST"; then
-                sed -i "/<manifest/a \    <uses-permission android:name=\"$PERM\" />" "$MANIFEST"
-              fi
-            done
-            # 2. Add screenOrientation="sensorLandscape" to MainActivity
-            if grep -q "activity android:name=\"\.MainActivity\"" "$MANIFEST"; then
-              sed -i 's/activity android:name="\.MainActivity"/activity android:name="\.MainActivity" android:screenOrientation="sensorLandscape"/g' "$MANIFEST"
-            fi
+          test -f "$MANIFEST"
+          # Landscape on the first activity (the tag spans several lines in the template)
+          if ! grep -q "sensorLandscape" "$MANIFEST"; then
+            sed -i '0,/<activity/s|<activity|<activity android:screenOrientation="sensorLandscape"|' "$MANIFEST"
           fi
+          # Permissions, added before the closing manifest tag
+          for PERM in android.permission.RECORD_AUDIO android.permission.MODIFY_AUDIO_SETTINGS android.permission.INTERNET; do
+            if ! grep -q "$PERM" "$MANIFEST"; then
+              sed -i "s|</manifest>|    <uses-permission android:name=\"$PERM\" />\n</manifest>|" "$MANIFEST"
+            fi
+          done
+          cat "$MANIFEST"
 
       - name: Sync Capacitor Android
         run: npx cap sync android
