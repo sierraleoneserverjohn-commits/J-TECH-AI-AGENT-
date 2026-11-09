@@ -8,11 +8,11 @@ import {
   Maximize2,
   Minimize2,
   Eye,
-  Radio,
   Mic,
   MicOff,
 } from 'lucide-react';
 import { speechManager } from '../voice/SpeechEngineManager';
+import { JexaLogo } from './JexaLogo';
 
 interface TopBarProps {
   deviceData: DeviceData;
@@ -40,16 +40,13 @@ export const TopBar: React.FC<TopBarProps> = ({
         now.toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
-          second: '2-digit',
         })
       );
-      setDateStr(
-        now.toLocaleDateString([], {
-          weekday: 'short',
-          month: 'short',
-          day: 'numeric',
-        })
-      );
+      // Short date format requested: "Mon 9 Nov"
+      const weekday = now.toLocaleDateString([], { weekday: 'short' });
+      const day = now.getDate();
+      const month = now.toLocaleDateString([], { month: 'short' });
+      setDateStr(`${weekday} ${day} ${month}`);
     };
 
     updateTime();
@@ -58,116 +55,122 @@ export const TopBar: React.FC<TopBarProps> = ({
   }, []);
 
   return (
-    <header className="h-10 px-3 md:px-4 flex items-center justify-between border-b border-cyan-950/80 bg-[#040914]/90 backdrop-blur-xl shrink-0 z-40 select-none font-mono">
-      {/* Left: JEXA logo (glowing ring) with tagline */}
-      <div className="flex items-center gap-2.5">
-        {/* JEXA SVG Logo */}
-        <div className="relative w-6 h-6 flex items-center justify-center">
-          <img src="/favicon.svg" alt="JEXA" className="w-6 h-6 drop-shadow-[0_0_8px_#00f0ff]" />
-        </div>
-
-        <div className="flex flex-col">
-          <span className="font-heading font-bold text-sm tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-200 to-white leading-none">
+    <header className="h-9 sm:h-10 px-2 sm:px-3 flex items-center justify-between border-b border-cyan-950/80 bg-[#040914]/95 backdrop-blur-xl shrink-0 z-40 select-none font-mono flex-nowrap overflow-hidden w-full">
+      {/* Left: JEXA Logo & Title (Never shrinks, non-wrapping) */}
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap">
+        <JexaLogo size={22} className="shrink-0 drop-shadow-[0_0_8px_#00f0ff]" />
+        <div className="flex items-baseline gap-1.5 shrink-0">
+          <span className="font-heading font-bold text-xs sm:text-sm tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-200 to-white leading-none">
             JEXA
           </span>
-          <span className="text-[8px] font-sans text-cyan-400/80 tracking-wide leading-none mt-0.5 hidden sm:inline">
-            Your Intelligent Assistant
+          <span className="text-[8px] font-sans text-cyan-400/80 tracking-wide leading-none hidden min-[850px]:inline">
+            Command Centre
           </span>
         </div>
       </div>
 
-      {/* Center: "Smarter • Faster • Always with you" */}
-      <div className="hidden md:flex items-center justify-center">
-        <span className="text-[11px] font-mono tracking-wider text-cyan-300/80 uppercase px-3 py-0.5 rounded-full bg-cyan-950/30 border border-cyan-500/20 text-glow-cyan">
+      {/* Center: "Smarter • Faster • Always with you" (Hidden below 1000px width as instructed) */}
+      <div className="hidden min-[1000px]:flex items-center justify-center shrink-0">
+        <span className="text-[10px] font-mono tracking-wider text-cyan-300/80 uppercase px-2.5 py-0.5 rounded-full bg-cyan-950/30 border border-cyan-500/20 text-glow-cyan">
           Smarter • Faster • Always with you
         </span>
       </div>
 
-      {/* Right: Persistent Mic & Mute, Live Clock, Wi-Fi, Battery, Focus Mode, Fullscreen, Settings */}
-      <div className="flex items-center gap-2.5 text-xs">
+      {/* Right: Telemetry & Controls (Clock, Date, Wi-Fi, Battery, Mic Mute, Eye, Fullscreen, Settings) */}
+      {/* Must never be clipped - flex-nowrap, shrink-0, compact button sizes */}
+      <div className="flex items-center gap-1 sm:gap-1.5 text-[10px] sm:text-[11px] shrink-0 flex-nowrap">
         {/* Persistent Visible Mic Indicator & One-Tap Hard Mute */}
         <button
+          type="button"
           onClick={() => {
             const muted = speechManager.toggleMute();
             setMutedState(muted);
           }}
-          title={isMuted ? 'Microphone is Hard Muted (Click to Unmute)' : 'Microphone is Active (Click to Hard Mute)'}
+          title={isMuted ? 'Microphone is Hard Muted (Click to Unmute)' : 'Microphone is Live (Click to Hard Mute)'}
           aria-label={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md border min-h-[36px] transition-all ${
+          className={`flex items-center gap-1 px-1.5 py-1 rounded border shrink-0 transition-all ${
             isMuted
               ? 'bg-rose-950/50 border-rose-500/60 text-rose-300 hover:bg-rose-900/60 shadow-[0_0_8px_rgba(244,63,94,0.3)]'
               : 'bg-cyan-950/40 border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/50'
           }`}
         >
           {isMuted ? (
-            <MicOff className="w-3.5 h-3.5 text-rose-400" />
+            <MicOff className="w-3 h-3 text-rose-400 shrink-0" />
           ) : (
-            <Mic className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+            <Mic className="w-3 h-3 text-cyan-400 animate-pulse shrink-0" />
           )}
-          <span className="text-[9.5px] font-bold uppercase tracking-wider hidden sm:inline">
-            {isMuted ? 'Muted' : 'Mic Live'}
+          <span className="text-[9px] font-bold uppercase tracking-wider hidden min-[680px]:inline">
+            {isMuted ? 'Muted' : 'Live'}
           </span>
         </button>
 
-        {/* Clock & Date */}
-        <div className="flex items-center gap-1.5 text-slate-300 text-[11px]">
+        {/* Live Clock & Short Date ("Mon 9 Nov") */}
+        <div className="flex items-center gap-1 text-slate-300 shrink-0 px-1">
           <span className="text-cyan-400 font-semibold">{timeStr}</span>
-          <span className="text-slate-500 hidden sm:inline">•</span>
-          <span className="text-slate-400 hidden sm:inline">{dateStr}</span>
-        </div>
-
-        {/* Wi-Fi Status */}
-        <div className="flex items-center gap-1 text-[11px]" title={`Network: ${deviceData.connectionType}`}>
-          <Wifi className={`w-3.5 h-3.5 ${deviceData.isOnline ? 'text-cyan-400' : 'text-rose-500'}`} />
-          <span className="text-slate-400 hidden lg:inline">
-            {deviceData.isOnline ? deviceData.connectionType : 'Offline'}
+          <span className="text-slate-500 hidden min-[580px]:inline">•</span>
+          <span className="text-slate-400 hidden min-[580px]:inline text-[9.5px] whitespace-nowrap">
+            {dateStr}
           </span>
         </div>
 
+        {/* Wi-Fi Status */}
+        <div
+          className="flex items-center gap-0.5 shrink-0 px-0.5"
+          title={`Network: ${deviceData.isOnline ? deviceData.connectionType : 'Offline'}`}
+        >
+          <Wifi className={`w-3 h-3 shrink-0 ${deviceData.isOnline ? 'text-cyan-400' : 'text-rose-500'}`} />
+        </div>
+
         {/* Battery % */}
-        <div className="flex items-center gap-1 text-[11px]" title="Device Battery">
+        <div
+          className="flex items-center gap-0.5 shrink-0 px-0.5"
+          title={`Battery: ${deviceData.batteryLevel !== null ? `${deviceData.batteryLevel}%` : 'Not available'}`}
+        >
           {deviceData.isCharging ? (
-            <BatteryCharging className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <BatteryCharging className="w-3 h-3 shrink-0 text-emerald-400 animate-pulse" />
           ) : (
-            <Battery className="w-3.5 h-3.5 text-cyan-400" />
+            <Battery className="w-3 h-3 shrink-0 text-cyan-400" />
           )}
-          <span className="text-slate-300 font-medium">
-            {deviceData.batteryLevel !== null ? `${deviceData.batteryLevel}%` : 'Not available'}
+          <span className="text-slate-300 font-medium text-[9.5px]">
+            {deviceData.batteryLevel !== null ? `${deviceData.batteryLevel}%` : ''}
           </span>
         </div>
 
         {/* Focus Mode button */}
         <button
+          type="button"
           onClick={onToggleFocusMode}
-          title={isFocusMode ? 'Exit Focus Mode' : 'Enter Focus Mode (isolate globe)'}
+          title={isFocusMode ? 'Exit Focus Mode' : 'Enter Focus Mode'}
           aria-label={isFocusMode ? 'Exit Focus Mode' : 'Enter Focus Mode'}
-          className={`p-2 rounded transition-all min-h-[44px] min-w-[44px] flex items-center justify-center border ${
+          className={`w-7 h-7 sm:w-8 sm:h-8 rounded flex items-center justify-center shrink-0 border transition-all ${
             isFocusMode
-              ? 'bg-cyan-500 text-slate-950 border-cyan-300 shadow-[0_0_12px_#00f0ff]'
+              ? 'bg-cyan-500 text-slate-950 border-cyan-300 shadow-[0_0_10px_#00f0ff]'
               : 'text-slate-400 hover:text-cyan-300 border-slate-800 hover:bg-slate-800/60'
           }`}
         >
-          <Eye className="w-4 h-4" />
+          <Eye className="w-3.5 h-3.5" />
         </button>
 
         {/* Fullscreen Button */}
         <button
+          type="button"
           onClick={onToggleFullscreen}
           title="Toggle Fullscreen"
           aria-label="Toggle Fullscreen"
-          className="p-2 text-slate-400 hover:text-cyan-300 rounded border border-slate-800 hover:bg-slate-800/60 min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors"
+          className="w-7 h-7 sm:w-8 sm:h-8 rounded flex items-center justify-center shrink-0 border border-slate-800 text-slate-400 hover:text-cyan-300 hover:bg-slate-800/60 transition-colors"
         >
-          <Maximize2 className="w-4 h-4" />
+          <Maximize2 className="w-3.5 h-3.5" />
         </button>
 
-        {/* Settings gear */}
+        {/* Settings gear - flex-shrink-0 to guarantee it never gets pushed out */}
         <button
+          type="button"
           onClick={onOpenSettings}
-          title="JEXA Core Settings"
+          title="JEXA Settings"
           aria-label="Open Settings"
-          className="p-2 text-slate-400 hover:text-cyan-300 rounded border border-slate-800 hover:bg-slate-800/60 min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors"
+          className="w-7 h-7 sm:w-8 sm:h-8 rounded flex items-center justify-center shrink-0 border border-cyan-500/40 bg-cyan-950/30 text-cyan-300 hover:text-white hover:bg-cyan-900/60 shadow-[0_0_8px_rgba(0,240,255,0.25)] transition-all"
         >
-          <Settings className="w-4 h-4" />
+          <Settings className="w-3.5 h-3.5" />
         </button>
       </div>
     </header>

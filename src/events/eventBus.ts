@@ -95,6 +95,19 @@ export type JexaEventMap = {
     role: 'user' | 'assistant' | 'system';
     text: string;
     timestamp?: number;
+    provider?: string;
+    model?: string;
+    latencyMs?: number;
+    autoReason?: string;
+    sources?: Array<{ title: string; url: string }>;
+    compare?: {
+      modelA: string;
+      replyA: string;
+      latencyMsA: number;
+      modelB: string;
+      replyB: string;
+      latencyMsB: number;
+    };
   };
   action: ActionItem;
 };

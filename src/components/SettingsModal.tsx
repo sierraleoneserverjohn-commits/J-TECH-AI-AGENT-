@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { getActiveBrainId, setActiveBrain } from '../brains';
+import { getActiveBrainId } from '../brains';
 import { eventBus } from '../events/eventBus';
 import { ApiClient } from '../api/client';
 import { speechManager } from '../voice/SpeechEngineManager';
 import { LiveVoiceName, VoiceMode } from '../voice/types';
 import {
   Settings,
-  Cpu,
   Server,
   Check,
   X,
@@ -22,6 +21,11 @@ import {
   Volume2,
   Sparkles,
   Info,
+  Star,
+  Zap,
+  Sliders,
+  Layers,
+  Cpu,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -32,19 +36,25 @@ interface SettingsModalProps {
 
 interface DiscoveredModel {
   id: string;
+  rawId: string;
+  provider: 'Gemini' | 'Groq' | 'OpenRouter';
   displayName: string;
   description: string;
   recommended: boolean;
   deprecated: boolean;
-  supportedActions: string[];
+  supportedTasks: Array<'chat' | 'reasoning' | 'research' | 'vision' | 'voice'>;
+  contextWindow?: number;
 }
+
+export type ModelMode = 'auto' | 'manual' | 'task' | 'presets';
+export type ModelPreset = 'eco' | 'balanced' | 'max';
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   onBackendUpdated,
 }) => {
-  const [activeBrain, setBrain] = useState<string>(getActiveBrainId());
+  const [, setRerender] = useState<number>(0);
 
   // Backend URL (defaults to stored or window origin)
   const [backendUrl, setBackendUrl] = useState<string>(() => {
@@ -64,15 +74,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     latencyMs?: number;
   }>({ status: 'idle', message: '' });
 
-  // Models State
+  // AI Model Mode State
+  const [modelMode, setModelMode] = useState<ModelMode>(() => {
+    return (localStorage.getItem('jexa_model_mode') as ModelMode) || 'auto';
+  });
+
+  const [selectedManualModel, setSelectedManualModel] = useState<string>(() => {
+    return localStorage.getItem('jexa_model_manual') || 'gemini/gemini-3.8-flash';
+  });
+
+  const [allowFallback, setAllowFallback] = useState<boolean>(() => {
+    return localStorage.getItem('jexa_allow_fallback') !== 'false';
+  });
+
+  const [selectedPreset, setSelectedPreset] = useState<ModelPreset>(() => {
+    return (localStorage.getItem('jexa_model_preset') as ModelPreset) || 'balanced';
+  });
+
+  // Per Task Models
+  const [taskChatModel, setTaskChatModel] = useState<string>(() => {
+    return localStorage.getItem('jexa_model_task_chat') || 'gemini/gemini-3.8-flash';
+  });
+  const [taskReasoningModel, setTaskReasoningModel] = useState<string>(() => {
+    return localStorage.getItem('jexa_model_task_reasoning') || 'gemini/gemini-3.8-flash';
+  });
+  const [taskResearchModel, setTaskResearchModel] = useState<string>(() => {
+    return localStorage.getItem('jexa_model_task_research') || 'gemini/gemini-3.8-flash';
+  });
+  const [taskVisionModel, setTaskVisionModel] = useState<string>(() => {
+    return localStorage.getItem('jexa_model_task_vision') || 'gemini/gemini-3.8-flash';
+  });
+  const [taskVoiceModel, setTaskVoiceModel] = useState<string>(() => {
+    return localStorage.getItem('jexa_model_task_voice') || 'gemini/gemini-3.8-live';
+  });
+
+  // Pinned Favorites State
+  const [favoriteModels, setFavoriteModels] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('jexa_favorite_models');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Discovered Models Cache
+  const [allModels, setAllModels] = useState<DiscoveredModel[]>([]);
   const [chatModels, setChatModels] = useState<DiscoveredModel[]>([]);
-  const [liveModels, setLiveModels] = useState<DiscoveredModel[]>([]);
-  const [selectedChatModel, setSelectedChatModel] = useState<string>(() => {
-    return localStorage.getItem('jexa_chat_model') || 'gemini-3.8-flash';
-  });
-  const [selectedLiveModel, setSelectedLiveModel] = useState<string>(() => {
-    return localStorage.getItem('jexa_live_model') || 'gemini-3.8-live';
-  });
+  const [voiceModels, setVoiceModels] = useState<DiscoveredModel[]>([]);
+  const [configuredProviders, setConfiguredProviders] = useState<{
+    Gemini: boolean;
+    Groq: boolean;
+    OpenRouter: boolean;
+  }>({ Gemini: false, Groq: false, OpenRouter: false });
   const [loadingModels, setLoadingModels] = useState(false);
 
   // Voice Settings
@@ -80,44 +134,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [selectedVoice, setSelectedVoice] = useState<LiveVoiceName>(() => speechManager.getSelectedVoice());
   const [testingVoice, setTestingVoice] = useState(false);
 
-  // Fetch real discovered models on open or connection success
-  useEffect(() => {
-    if (!isOpen) return;
+  // Fetch real discovered models on open
+  const loadModels = async (forceRefresh = false) => {
+    if (!ApiClient.isConnected()) return;
+    setLoadingModels(true);
+    try {
+      const data = await ApiClient.get<{
+        models: DiscoveredModel[];
+        chatModels: DiscoveredModel[];
+        voiceModels: DiscoveredModel[];
+        configuredProviders: { Gemini: boolean; Groq: boolean; OpenRouter: boolean };
+      }>(`/models${forceRefresh ? '?refresh=true' : ''}`);
 
-    const fetchModels = async () => {
-      if (!ApiClient.isConnected()) return;
-      setLoadingModels(true);
-      try {
-        const data = await ApiClient.get<{
-          chatModels: DiscoveredModel[];
-          liveModels: DiscoveredModel[];
-          currentChatModel?: string;
-          currentLiveModel?: string;
-        }>('/models');
-
-        if (data.chatModels && data.chatModels.length > 0) {
-          setChatModels(data.chatModels);
-        }
-        if (data.liveModels && data.liveModels.length > 0) {
-          setLiveModels(data.liveModels);
-        }
-        if (data.currentChatModel && !localStorage.getItem('jexa_chat_model')) {
-          setSelectedChatModel(data.currentChatModel);
-        }
-        if (data.currentLiveModel && !localStorage.getItem('jexa_live_model')) {
-          setSelectedLiveModel(data.currentLiveModel);
-        }
-      } catch (err) {
-        console.warn('[Settings] Failed to fetch models list:', err);
-      } finally {
-        setLoadingModels(false);
+      if (data.models && data.models.length > 0) {
+        setAllModels(data.models);
+        setChatModels(data.chatModels || data.models);
+        setVoiceModels(data.voiceModels || []);
+        setConfiguredProviders(data.configuredProviders || { Gemini: true, Groq: false, OpenRouter: false });
       }
-    };
+    } catch (err) {
+      console.warn('[Settings] Failed to fetch models list:', err);
+    } finally {
+      setLoadingModels(false);
+    }
+  };
 
-    fetchModels();
+  useEffect(() => {
+    if (isOpen) {
+      loadModels(false);
+    }
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const toggleFavorite = (modelId: string) => {
+    setFavoriteModels((prev) => {
+      const next = prev.includes(modelId) ? prev.filter((id) => id !== modelId) : [...prev, modelId];
+      localStorage.setItem('jexa_favorite_models', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const handlePasteToken = async () => {
     try {
@@ -134,8 +190,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const cleanUrl = backendUrl.trim().replace(/\/+$/, '');
     localStorage.setItem('jexa_backend_url', cleanUrl);
     localStorage.setItem('jexa_access_token', accessToken.trim());
-    localStorage.setItem('jexa_chat_model', selectedChatModel);
-    localStorage.setItem('jexa_live_model', selectedLiveModel);
+
+    // Save Model Mode Configuration
+    localStorage.setItem('jexa_model_mode', modelMode);
+    localStorage.setItem('jexa_model_manual', selectedManualModel);
+    localStorage.setItem('jexa_allow_fallback', String(allowFallback));
+    localStorage.setItem('jexa_model_preset', selectedPreset);
+    localStorage.setItem('jexa_model_task_chat', taskChatModel);
+    localStorage.setItem('jexa_model_task_reasoning', taskReasoningModel);
+    localStorage.setItem('jexa_model_task_research', taskResearchModel);
+    localStorage.setItem('jexa_model_task_vision', taskVisionModel);
+    localStorage.setItem('jexa_model_task_voice', taskVoiceModel);
+
+    // Save Voice Configuration
     localStorage.setItem('jexa_voice_mode', voiceMode);
     localStorage.setItem('jexa_live_voice', selectedVoice);
 
@@ -143,7 +210,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     speechManager.setSelectedVoice(selectedVoice);
 
     eventBus.emit('log', {
-      text: `Settings saved: Backend URL set to ${cleanUrl || '(empty)'}`,
+      text: `Settings saved: AI Model Mode set to "${modelMode}" (stateless sync)`,
       level: 'info',
     });
 
@@ -193,11 +260,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setTestResult({
         status: 'success',
         latencyMs,
-        message: `Connected (${latencyMs}ms) • ${data.system || 'JEXA Core'} online • Gemini: ${data.geminiConfigured ? 'Active' : 'Not configured'}`,
+        message: `Connected (${latencyMs}ms) • ${data.system || 'JEXA Core'} online • Providers: Gemini ${data.geminiConfigured ? '✓' : '✗'}, Groq ${data.groqConfigured ? '✓' : '✗'}, OpenRouter ${data.openRouterConfigured ? '✓' : '✗'}`,
       });
 
-      // Auto-save verified settings
       handleSaveSettings();
+      loadModels(true);
     } catch (err: any) {
       const latencyMs = Date.now() - startTime;
       let friendlyMsg = err.message || 'Server unreachable';
@@ -221,12 +288,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTimeout(() => setTestingVoice(false), 1200);
   };
 
-  const isSelectedChatDeprecated = chatModels.find((m) => m.id === selectedChatModel)?.deprecated;
-  const isSelectedLiveDeprecated = liveModels.find((m) => m.id === selectedLiveModel)?.deprecated;
+  // Helper to sort models with pinned favorites at top
+  const sortModelsWithFavorites = (models: DiscoveredModel[]) => {
+    return [...models].sort((a, b) => {
+      const aFav = favoriteModels.includes(a.id);
+      const bFav = favoriteModels.includes(b.id);
+      if (aFav && !bFav) return -1;
+      if (!aFav && bFav) return 1;
+      if (a.recommended && !b.recommended) return -1;
+      if (!a.recommended && b.recommended) return 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
+  };
+
+  const sortedAllModels = sortModelsWithFavorites(allModels);
+  const currentManualModelObj = allModels.find((m) => m.id === selectedManualModel);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 font-mono animate-in fade-in duration-150 select-none">
-      <div className="bg-[#050b16] border border-cyan-500/40 rounded-xl p-4 max-w-lg w-full shadow-2xl text-slate-100 max-h-[92dvh] overflow-y-auto">
+      <div className="bg-[#050b16] border border-cyan-500/40 rounded-xl p-4 max-w-xl w-full shadow-2xl text-slate-100 max-h-[92dvh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between pb-2.5 border-b border-cyan-950">
           <div className="flex items-center gap-2">
@@ -245,7 +325,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="space-y-3.5 my-3 text-[11px]">
-          {/* 1. Backend URL & Access Token Configuration */}
+          {/* 1. Backend URL & Access Token */}
           <div className="p-3 rounded-lg bg-[#02050c] border border-cyan-500/30 space-y-2.5">
             <div className="flex items-center gap-1.5 text-cyan-300 font-semibold text-xs">
               <Server className="w-3.5 h-3.5 text-cyan-400" />
@@ -354,84 +434,289 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
-          {/* 2. Model Discovery & Selection (Section 7) */}
-          <div className="p-3 rounded-lg bg-[#02050c] border border-cyan-500/30 space-y-2.5">
+          {/* 2. AI MODEL MODE (Item E Specification) */}
+          <div className="p-3 rounded-lg bg-[#02050c] border border-cyan-500/30 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-cyan-300 font-semibold text-xs">
-                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Model Selection (Discovered from Gemini API)</span>
+                <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                <span>AI Model Mode</span>
               </div>
-              {loadingModels && (
-                <span className="text-[9px] text-cyan-400 animate-pulse font-mono">Discovering...</span>
-              )}
+              <button
+                type="button"
+                onClick={() => loadModels(true)}
+                disabled={loadingModels}
+                title="Refresh models cache (10 min cache)"
+                className="text-[9.5px] text-cyan-400 hover:text-cyan-200 flex items-center gap-1 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40"
+              >
+                <RefreshCw className={`w-2.5 h-2.5 ${loadingModels ? 'animate-spin' : ''}`} />
+                <span>Refresh models</span>
+              </button>
             </div>
 
-            {/* Chat Model Selector */}
-            <div>
-              <label className="text-[10px] uppercase text-slate-400 block mb-1">
-                Chat & Reasoning Model (generateContent)
-              </label>
-              <select
-                value={selectedChatModel}
-                onChange={(e) => setSelectedChatModel(e.target.value)}
-                className="w-full py-1.5 px-2 rounded bg-[#030712] border border-slate-700 text-xs text-white focus-visible:ring-1 focus-visible:ring-cyan-400 font-mono"
-              >
-                {chatModels.length > 0 ? (
-                  chatModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.displayName} {m.recommended ? '★ (Recommended)' : ''} {m.deprecated ? '⚠ (Deprecated)' : ''}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option value="gemini-3.8-flash">Gemini 3.8 Flash ★ (Recommended)</option>
-                    <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite ★ (Fast & Cost Efficient)</option>
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash ⚠ (Deprecated)</option>
-                  </>
-                )}
-              </select>
-              {isSelectedChatDeprecated && (
-                <p className="text-[9px] text-amber-400 mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-2.5 h-2.5" />
-                  <span>Warning: This model is deprecated/retiring. Consider gemini-3.8-flash.</span>
-                </p>
-              )}
+            {/* Mode Tabs */}
+            <div className="grid grid-cols-4 gap-1 p-0.5 rounded-lg bg-slate-900 border border-slate-800">
+              {[
+                { id: 'auto', label: 'Auto', icon: Zap },
+                { id: 'manual', label: 'Manual', icon: Sliders },
+                { id: 'task', label: 'Per Task', icon: Layers },
+                { id: 'presets', label: 'Presets', icon: Sparkles },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const isSelected = modelMode === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setModelMode(tab.id as ModelMode)}
+                    className={`py-1.5 px-1 rounded-md text-center transition-all flex flex-col sm:flex-row items-center justify-center gap-1 text-[10.5px] ${
+                      isSelected
+                        ? 'bg-cyan-600 text-white font-bold shadow'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <Icon className="w-3 h-3" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Live Voice Model Selector */}
-            <div>
-              <label className="text-[10px] uppercase text-slate-400 block mb-1">
-                Real-Time Voice Model (bidiGenerateContent)
-              </label>
-              <select
-                value={selectedLiveModel}
-                onChange={(e) => setSelectedLiveModel(e.target.value)}
-                className="w-full py-1.5 px-2 rounded bg-[#030712] border border-slate-700 text-xs text-white focus-visible:ring-1 focus-visible:ring-cyan-400 font-mono"
-              >
-                {liveModels.length > 0 ? (
-                  liveModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.displayName} {m.recommended ? '★ (Recommended)' : ''} {m.deprecated ? '⚠ (Deprecated)' : ''}
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option value="gemini-3.8-live">Gemini 3.8 Live ★ (Recommended)</option>
-                    <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Flash Live Preview (Fallback)</option>
-                    <option value="gemini-2.0-flash-live">Gemini 2.0 Flash Live ⚠ (Deprecated)</option>
-                  </>
-                )}
-              </select>
-              {isSelectedLiveDeprecated && (
-                <p className="text-[9px] text-amber-400 mt-1 flex items-center gap-1">
-                  <AlertCircle className="w-2.5 h-2.5" />
-                  <span>Warning: This Live model is deprecated. Consider gemini-3.8-live.</span>
+            {/* 2a. AUTO MODE */}
+            {modelMode === 'auto' && (
+              <div className="space-y-2 p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+                <div className="flex items-center justify-between text-[11px] text-cyan-300 font-semibold">
+                  <span>Intelligent 0-Token Rule Selection</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+                    Active
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-300 leading-relaxed">
+                  Backend selects the optimal model per request without consuming LLM tokens, then emits a live explanation to the Live activity chip:
                 </p>
-              )}
-            </div>
+                <ul className="space-y-1 text-[9.5px] text-slate-400 font-sans">
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-cyan-400 font-bold">•</span>
+                    <span><strong>Voice interactions:</strong> Uses Gemini Live bidi streaming model.</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-cyan-400 font-bold">•</span>
+                    <span><strong>Conversational chat:</strong> Uses fastest low-latency provider (Groq LPU or Gemini Flash-Lite).</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-cyan-400 font-bold">•</span>
+                    <span><strong>Deep reasoning & research:</strong> Routes to Gemini 3.8 Flash for multimodal grounding.</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-cyan-400 font-bold">•</span>
+                    <span><strong>Rate limits & circuit breaker:</strong> Seamlessly trips to healthy backup provider.</span>
+                  </li>
+                </ul>
+              </div>
+            )}
+
+            {/* 2b. MANUAL MODE */}
+            {modelMode === 'manual' && (
+              <div className="space-y-2.5 p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] uppercase text-slate-400">
+                      Target Model (All tasks)
+                    </label>
+                    {currentManualModelObj && (
+                      <button
+                        type="button"
+                        onClick={() => toggleFavorite(selectedManualModel)}
+                        className="text-[9px] text-amber-400 flex items-center gap-0.5 hover:underline"
+                      >
+                        <Star className={`w-2.5 h-2.5 ${favoriteModels.includes(selectedManualModel) ? 'fill-amber-400' : ''}`} />
+                        <span>{favoriteModels.includes(selectedManualModel) ? 'Pinned' : 'Pin Favorite'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <select
+                    value={selectedManualModel}
+                    onChange={(e) => setSelectedManualModel(e.target.value)}
+                    className="w-full py-1.5 px-2 rounded bg-[#030712] border border-slate-700 text-xs text-white focus-visible:ring-1 focus-visible:ring-cyan-400 font-mono"
+                  >
+                    {sortedAllModels.length > 0 ? (
+                      sortedAllModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {favoriteModels.includes(m.id) ? '★ ' : ''}
+                          [{m.provider}] {m.displayName} {m.recommended ? '(Recommended)' : ''} {m.deprecated ? '⚠ (Retired/Retiring)' : ''}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="gemini/gemini-3.8-flash">Gemini / Gemini 3.8 Flash ★</option>
+                        <option value="gemini/gemini-3.5-flash-lite">Gemini / Gemini 3.5 Flash-Lite</option>
+                        <option value="groq/llama-3.3-70b-versatile">Groq / Llama 3.3 70B</option>
+                      </>
+                    )}
+                  </select>
+
+                  {currentManualModelObj?.deprecated && (
+                    <p className="text-[9px] text-amber-400 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-2.5 h-2.5" />
+                      <span>Warning: This model is deprecated or retiring by the provider.</span>
+                    </p>
+                  )}
+                </div>
+
+                {/* Fallback Toggle */}
+                <label className="flex items-center gap-2 pt-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowFallback}
+                    onChange={(e) => setAllowFallback(e.target.checked)}
+                    className="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-cyan-400"
+                  />
+                  <span className="text-[10px] text-slate-300">
+                    Allow fallback to secondary provider if manual model fails or trips quota
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {/* 2c. PER TASK MODE */}
+            {modelMode === 'task' && (
+              <div className="space-y-2 p-2.5 rounded-lg bg-slate-900/60 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block mb-1">
+                  Assign specific models to each capability:
+                </span>
+
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[9.5px] uppercase text-cyan-400 block mb-0.5">Chat</label>
+                    <select
+                      value={taskChatModel}
+                      onChange={(e) => setTaskChatModel(e.target.value)}
+                      className="w-full py-1 px-1.5 rounded bg-[#030712] border border-slate-700 text-[10.5px] text-white font-mono"
+                    >
+                      {sortedAllModels.map((m) => (
+                        <option key={`chat-${m.id}`} value={m.id}>
+                          [{m.provider}] {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9.5px] uppercase text-cyan-400 block mb-0.5">Reasoning</label>
+                    <select
+                      value={taskReasoningModel}
+                      onChange={(e) => setTaskReasoningModel(e.target.value)}
+                      className="w-full py-1 px-1.5 rounded bg-[#030712] border border-slate-700 text-[10.5px] text-white font-mono"
+                    >
+                      {sortedAllModels.map((m) => (
+                        <option key={`reason-${m.id}`} value={m.id}>
+                          [{m.provider}] {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9.5px] uppercase text-cyan-400 block mb-0.5">Research & Grounding</label>
+                    <select
+                      value={taskResearchModel}
+                      onChange={(e) => setTaskResearchModel(e.target.value)}
+                      className="w-full py-1 px-1.5 rounded bg-[#030712] border border-slate-700 text-[10.5px] text-white font-mono"
+                    >
+                      {sortedAllModels.map((m) => (
+                        <option key={`res-${m.id}`} value={m.id}>
+                          [{m.provider}] {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9.5px] uppercase text-cyan-400 block mb-0.5">Vision & Multimodal</label>
+                    <select
+                      value={taskVisionModel}
+                      onChange={(e) => setTaskVisionModel(e.target.value)}
+                      className="w-full py-1 px-1.5 rounded bg-[#030712] border border-slate-700 text-[10.5px] text-white font-mono"
+                    >
+                      {sortedAllModels.map((m) => (
+                        <option key={`vis-${m.id}`} value={m.id}>
+                          [{m.provider}] {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[9.5px] uppercase text-cyan-400 block mb-0.5">Voice (Live Stream)</label>
+                    <select
+                      value={taskVoiceModel}
+                      onChange={(e) => setTaskVoiceModel(e.target.value)}
+                      className="w-full py-1 px-1.5 rounded bg-[#030712] border border-slate-700 text-[10.5px] text-white font-mono"
+                    >
+                      {(voiceModels.length > 0 ? voiceModels : sortedAllModels).map((m) => (
+                        <option key={`voc-${m.id}`} value={m.id}>
+                          [{m.provider}] {m.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 2d. PRESETS */}
+            {modelMode === 'presets' && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {[
+                  {
+                    id: 'eco',
+                    title: 'Eco Preset',
+                    badge: 'Fastest',
+                    desc: 'Uses high-speed lightweight models (Groq LPU or Gemini Flash-Lite). Minimizes quota usage.',
+                    color: 'emerald',
+                  },
+                  {
+                    id: 'balanced',
+                    title: 'Balanced',
+                    badge: 'Recommended',
+                    desc: 'Adaptive balance of sub-second conversational response and high-speed multimodal reasoning.',
+                    color: 'cyan',
+                  },
+                  {
+                    id: 'max',
+                    title: 'Max Quality',
+                    badge: 'Deep Reasoning',
+                    desc: 'Flags highest-tier reasoning models (Gemini 3.8 Flash / Claude flagship) for maximum depth.',
+                    color: 'purple',
+                  },
+                ].map((p) => {
+                  const isSelected = selectedPreset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setSelectedPreset(p.id as ModelPreset)}
+                      className={`p-2.5 rounded-lg border text-left transition-all ${
+                        isSelected
+                          ? 'border-cyan-400 bg-cyan-950/60 shadow-[0_0_12px_rgba(0,240,255,0.25)] text-white'
+                          : 'border-slate-800 bg-[#030712] text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-[10.5px] text-cyan-300">{p.title}</span>
+                        <span className="text-[8.5px] px-1 py-0.5 rounded bg-slate-800 text-slate-300">
+                          {p.badge}
+                        </span>
+                      </div>
+                      <p className="text-[9px] text-slate-400 leading-tight">{p.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {/* 3. Voice: Always Listening & Live Voice (Section 3) */}
+          {/* 3. Voice Engine & Always-Listening */}
           <div className="p-3 rounded-lg bg-[#02050c] border border-cyan-500/30 space-y-2.5">
             <div className="flex items-center gap-1.5 text-cyan-300 font-semibold text-xs">
               <Mic className="w-3.5 h-3.5 text-cyan-400" />
@@ -470,10 +755,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   );
                 })}
               </div>
-              <p className="text-[8.5px] text-slate-400 mt-1 flex items-center gap-1">
-                <Info className="w-2.5 h-2.5 text-cyan-400 shrink-0" />
-                <span>Always-listening and wake phrase keep screen awake while JEXA is active on screen.</span>
-              </p>
             </div>
 
             {/* Live Voice Profile & Test Voice */}
@@ -538,7 +819,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={() => {
                       localStorage.setItem('jexa_accent_theme', th.id);
                       document.documentElement.style.setProperty('--jexa-accent', th.color);
-                      setBrain((b) => b);
+                      setRerender((v) => v + 1);
                     }}
                     className={`py-1.5 px-2 rounded-lg border text-center transition-all ${
                       isSelected
@@ -567,7 +848,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onClick={() => {
                   const current = localStorage.getItem('jexa_battery_saver') === 'true';
                   localStorage.setItem('jexa_battery_saver', String(!current));
-                  setBrain((b) => b);
+                  setRerender((v) => v + 1);
                 }}
                 className={`w-10 h-5 rounded-full transition-colors relative ${
                   localStorage.getItem('jexa_battery_saver') === 'true'

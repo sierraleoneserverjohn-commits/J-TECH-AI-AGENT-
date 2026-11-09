@@ -11,6 +11,8 @@ import { circuitBreaker } from './models/circuitBreaker.js';
 import { tokenTracker } from './models/tokenTracker.js';
 import { contextManager } from './context/contextManager.js';
 import { supabaseMemory } from './memory/supabaseMemory.js';
+import { discoverAllModels } from './models/modelRegistry.js';
+import { modelGateway } from './models/modelGateway.js';
 
 // Cache for provider real health check to avoid spamming upstream APIs (60s cache)
 interface ProviderPingCache {
@@ -286,152 +288,86 @@ export function createApp() {
     });
   });
 
-  // 1c. GET /models : Real Gemini and Provider Model Discovery
-  app.get('/models', async (_req: Request, res: Response) => {
+  // 1c. GET /models : Discovered Models from all configured providers
+  app.get('/models', async (req: Request, res: Response) => {
     try {
-      const chatModels: Array<{
-        id: string;
-        displayName: string;
-        description: string;
-        recommended: boolean;
-        deprecated: boolean;
-        supportedActions: string[];
-      }> = [];
-
-      const liveModels: Array<{
-        id: string;
-        displayName: string;
-        description: string;
-        recommended: boolean;
-        deprecated: boolean;
-        supportedActions: string[];
-      }> = [];
-
-      if (config.geminiApiKey) {
-        try {
-          const ai = new GoogleGenAI({
-            apiKey: config.geminiApiKey,
-            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-          });
-
-          const pager = await ai.models.list();
-          for await (const m of pager) {
-            const rawName = m.name || '';
-            const id = rawName.replace(/^models\//, '');
-            const actions = (m.supportedActions as string[]) || [];
-            const isDeprecated =
-              id.startsWith('gemini-1.5') ||
-              id.startsWith('gemini-2.0') ||
-              id.includes('deprecated') ||
-              (m.description?.toLowerCase().includes('deprecat') ?? false);
-
-            const isChatRec = id === 'gemini-3.8-flash' || id === 'gemini-3.5-flash-lite';
-            const isLiveRec = id === 'gemini-3.8-live' || id === 'gemini-3.1-flash-live-preview';
-
-            const entry = {
-              id,
-              displayName: m.displayName || id,
-              description: m.description || '',
-              recommended: false,
-              deprecated: isDeprecated,
-              supportedActions: actions,
-            };
-
-            if (actions.includes('generateContent') || (!actions.length && id.includes('flash'))) {
-              chatModels.push({ ...entry, recommended: isChatRec });
-            }
-            if (actions.includes('bidiGenerateContent') || id.includes('live')) {
-              liveModels.push({ ...entry, recommended: isLiveRec });
-            }
-          }
-        } catch (geminiErr: any) {
-          console.warn('[models] Real models.list discovery failed or timed out:', geminiErr.message);
-        }
-      }
-
-      // Ensure recommended models are always present
-      const ensureModel = (list: typeof chatModels, model: typeof chatModels[0]) => {
-        if (!list.some((m) => m.id === model.id)) {
-          list.push(model);
-        }
-      };
-
-      ensureModel(chatModels, {
-        id: 'gemini-3.8-flash',
-        displayName: 'Gemini 3.8 Flash (Latest, Recommended)',
-        description: 'High-speed multimodal reasoning and agent planning',
-        recommended: true,
-        deprecated: false,
-        supportedActions: ['generateContent'],
-      });
-      ensureModel(chatModels, {
-        id: 'gemini-3.5-flash-lite',
-        displayName: 'Gemini 3.5 Flash-Lite (Fast & Cost Efficient)',
-        description: 'Ultra-fast low-latency agent execution',
-        recommended: true,
-        deprecated: false,
-        supportedActions: ['generateContent'],
-      });
-      ensureModel(chatModels, {
-        id: 'gemini-2.0-flash',
-        displayName: 'Gemini 2.0 Flash (Deprecated)',
-        description: 'Legacy generation model',
-        recommended: false,
-        deprecated: true,
-        supportedActions: ['generateContent'],
-      });
-
-      ensureModel(liveModels, {
-        id: 'gemini-3.8-live',
-        displayName: 'Gemini 3.8 Live (Recommended)',
-        description: 'Native bidirectional audio and live visual understanding',
-        recommended: true,
-        deprecated: false,
-        supportedActions: ['bidiGenerateContent'],
-      });
-      ensureModel(liveModels, {
-        id: 'gemini-3.1-flash-live-preview',
-        displayName: 'Gemini 3.1 Flash Live Preview (Fallback)',
-        description: 'Low-latency live voice interaction preview',
-        recommended: true,
-        deprecated: false,
-        supportedActions: ['bidiGenerateContent'],
-      });
-      ensureModel(liveModels, {
-        id: 'gemini-2.0-flash-live',
-        displayName: 'Gemini 2.0 Flash Live (Deprecated)',
-        description: 'Legacy Live API model',
-        recommended: false,
-        deprecated: true,
-        supportedActions: ['bidiGenerateContent'],
-      });
-
+      const forceRefresh = req.query.refresh === 'true';
+      const discovery = await discoverAllModels(forceRefresh);
       res.json({
-        chatModels,
-        liveModels,
+        ...discovery,
         currentChatModel: config.geminiModel || 'gemini-3.8-flash',
         currentLiveModel: config.geminiLiveModel || 'gemini-3.8-live',
-        geminiConfigured: !!config.geminiApiKey,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to list models' });
     }
   });
 
-  // 2. POST /command : Run Agent Command
+  // 2. POST /command : Run Agent Command (supports mode, model, preset, task, allowFallback)
   app.post('/command', async (req: Request, res: Response) => {
-    const { text, sessionId } = req.body;
+    const { text, sessionId, mode, model, preset, task, allowFallback } = req.body;
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Body field "text" (string) is required.' });
     }
 
     try {
-      const response = await agentOrchestrator.executeCommand({ text, sessionId });
+      const response = await agentOrchestrator.executeCommand({
+        text,
+        sessionId,
+        mode,
+        model,
+        preset,
+        task,
+        allowFallback,
+      });
       res.json(response);
     } catch (err: any) {
       res.status(502).json({
         error: err.message || 'Agent execution failed.',
       });
+    }
+  });
+
+  // 2b. POST /compare : Compare Prompt between Two Selected Models (uses double quota)
+  app.post('/compare', async (req: Request, res: Response) => {
+    const { text, modelA, modelB } = req.body;
+    if (!text || !modelA || !modelB) {
+      return res.status(400).json({ error: 'Fields "text", "modelA", and "modelB" are required.' });
+    }
+
+    try {
+      const startTime = Date.now();
+      const [resA, resB] = await Promise.allSettled([
+        modelGateway.callSpecificModel(modelA, text),
+        modelGateway.callSpecificModel(modelB, text),
+      ]);
+
+      const formatResult = (res: PromiseSettledResult<any>, modelStr: string) => {
+        if (res.status === 'fulfilled') {
+          return {
+            status: 'success' as const,
+            reply: res.value.reply,
+            provider: res.value.provider,
+            model: res.value.model,
+            latencyMs: res.value.latencyMs,
+          };
+        }
+        return {
+          status: 'error' as const,
+          reply: res.reason?.message || 'Inference failed',
+          provider: modelStr.split('/')[0] || 'Unknown',
+          model: modelStr,
+          latencyMs: Date.now() - startTime,
+        };
+      };
+
+      res.json({
+        modelA: formatResult(resA, modelA),
+        modelB: formatResult(resB, modelB),
+        totalLatencyMs: Date.now() - startTime,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Comparison execution failed' });
     }
   });
 

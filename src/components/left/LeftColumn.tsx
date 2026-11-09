@@ -20,6 +20,7 @@ import {
   X,
   Loader2,
   Sparkles,
+  Settings,
 } from 'lucide-react';
 
 interface LeftColumnProps {
@@ -29,6 +30,7 @@ interface LeftColumnProps {
   collapsedPanels: Record<string, boolean>;
   toggleCollapse: (panelId: string) => void;
   onOpenVision?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const LeftColumn: React.FC<LeftColumnProps> = ({
@@ -38,6 +40,7 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
   collapsedPanels,
   toggleCollapse,
   onOpenVision,
+  onOpenSettings,
 }) => {
   const isBackendConnected = systemStatus.backendReachable;
 
@@ -136,6 +139,21 @@ export const LeftColumn: React.FC<LeftColumnProps> = ({
 
   return (
     <div className="flex flex-col gap-1.5 w-full h-full overflow-y-auto pr-0.5 font-mono text-[11px] select-none">
+      {/* 0. Quick Access Settings Item (Always reachable from Left Drawer) */}
+      {onOpenSettings && (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="w-full py-1.5 px-2.5 rounded-lg bg-cyan-950/70 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-200 flex items-center justify-between shrink-0 shadow-[0_0_10px_rgba(0,240,255,0.2)] transition-all active:scale-98"
+        >
+          <div className="flex items-center gap-1.5 font-heading text-[10px] uppercase font-bold tracking-wider">
+            <Settings className="w-3.5 h-3.5 text-cyan-400" />
+            <span>JEXA Settings</span>
+          </div>
+          <span className="text-[8.5px] px-1.5 py-0.5 rounded bg-cyan-900/60 text-cyan-300 font-mono">Open ⚙</span>
+        </button>
+      )}
+
       {/* 1. System Overview */}
       <div className="hud-corner-box hud-corner-accent rounded-lg p-2 shrink-0">
         <div className="flex items-center justify-between pb-1 border-b border-cyan-950/70">

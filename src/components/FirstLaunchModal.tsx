@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Server, Key, Eye, EyeOff, Clipboard, Activity, AlertCircle, Check, ArrowRight, Shield } from 'lucide-react';
-import logoSvg from '../assets/logo.svg';
+import { JexaLogo } from './JexaLogo';
 
 interface FirstLaunchModalProps {
   isOpen: boolean;
@@ -111,7 +111,7 @@ export const FirstLaunchModal: React.FC<FirstLaunchModalProps> = ({
       <div className="bg-[#050b16] border border-cyan-500/50 rounded-2xl p-6 max-w-lg w-full shadow-[0_0_50px_rgba(0,240,255,0.15)] text-slate-100 max-h-[95dvh] overflow-y-auto">
         {/* Header Branding */}
         <div className="flex flex-col items-center text-center pb-4 border-b border-cyan-950/80">
-          <img src={logoSvg} alt="JEXA Logo" className="w-14 h-14 mb-2 drop-shadow-[0_0_15px_#00f0ff]" />
+          <JexaLogo size={56} className="mb-2 drop-shadow-[0_0_15px_#00f0ff]" />
           <h2 className="text-base font-bold tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-sky-200 to-white uppercase font-heading">
             Initialize JEXA Core
           </h2>

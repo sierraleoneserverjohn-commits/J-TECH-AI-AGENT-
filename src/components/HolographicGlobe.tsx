@@ -638,24 +638,24 @@ export const HolographicGlobe: React.FC<HolographicGlobeProps> = ({
         })}
       </div>
 
-      {/* 2. HOLOGRAPHIC THREE.JS WEBGL CORE ORB */}
-      <div className="relative flex-1 flex items-center justify-center min-h-[165px] max-h-[210px] w-full">
+      {/* 2. HOLOGRAPHIC THREE.JS WEBGL CORE ORB (Limited strictly to 52-55% of visible height) */}
+      <div className="relative h-[52%] max-h-[55%] flex items-center justify-center w-full shrink-0 overflow-visible">
         <ThreeHolographicOrb
           state={state}
           audioLevel={audioLevel}
           width={width}
-          height={height}
+          height={Math.min(height, 175)}
         />
       </div>
 
-      {/* 3. JEXA AI CORE LABEL & STATE NAME UNDER THE GLOBE */}
-      <div className="flex flex-col items-center shrink-0 mb-1 z-10">
+      {/* 3. JEXA AI CORE LABEL & STATE NAME UNDER THE GLOBE (Clear spacing, never overlaps rings) */}
+      <div className="flex flex-col items-center shrink-0 my-1 z-10 space-y-1">
         <span className="text-[10px] font-heading font-bold tracking-[0.25em] text-cyan-200 text-glow-cyan uppercase opacity-95">
           JEXA AI CORE
         </span>
 
         {/* State name and Live voice session timer under the core label */}
-        <div className="mt-1 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/60 border border-cyan-500/35 text-[9px] font-mono text-cyan-300 shadow-[0_0_8px_rgba(0,240,255,0.2)]">
+        <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-cyan-950/70 border border-cyan-500/40 text-[9px] font-mono text-cyan-300 shadow-[0_0_8px_rgba(0,240,255,0.2)]">
           <span
             className={`w-1.5 h-1.5 rounded-full ${
               state === 'error'

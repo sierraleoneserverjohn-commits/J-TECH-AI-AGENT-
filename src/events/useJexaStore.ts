@@ -46,6 +46,19 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: number;
+  provider?: string;
+  model?: string;
+  latencyMs?: number;
+  autoReason?: string;
+  sources?: Array<{ title: string; url: string }>;
+  compare?: {
+    modelA: string;
+    replyA: string;
+    latencyMsA: number;
+    modelB: string;
+    replyB: string;
+    latencyMsB: number;
+  };
 }
 
 export interface ActiveTask {
@@ -260,6 +273,13 @@ export function useJexaStore() {
           } catch {}
         });
 
+        es.addEventListener('activity', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            eventBus.emit('activity', data);
+          } catch {}
+        });
+
         es.onerror = () => {
           if (!isMounted) return;
           setSystemStatus((prev) => ({ ...prev, sseStatus: 'reconnecting' }));
@@ -399,6 +419,12 @@ export function useJexaStore() {
         role: payload.role,
         text: payload.text,
         timestamp: payload.timestamp || Date.now(),
+        provider: payload.provider,
+        model: payload.model,
+        latencyMs: payload.latencyMs,
+        autoReason: payload.autoReason,
+        sources: payload.sources,
+        compare: payload.compare,
       };
       setMessages((prev) => [...prev, newMsg]);
     });

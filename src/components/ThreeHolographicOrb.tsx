@@ -32,8 +32,8 @@ const STATE_COLORS: Record<OrbState, THREE.Color> = {
 export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
   state,
   audioLevel,
-  width = 340,
-  height = 200,
+  width = 320,
+  height = 170,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const stateRef = useRef<OrbState>(state);
@@ -46,16 +46,16 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
     const container = mountRef.current;
     if (!container) return;
 
-    // Check battery saver and reduced motion preferences
     const isBatterySaver = localStorage.getItem('jexa_battery_saver') === 'true';
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // 1. Scene, Camera, Renderer
+    // 1. Scene, Camera, WebGLRenderer
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    camera.position.z = 5.2;
+    // Position camera to fit the 55% height comfortably with outer rings
+    camera.position.z = 5.6;
 
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
@@ -70,7 +70,72 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
 
     container.appendChild(renderer.domElement);
 
-    // 2. Texture helper for round glowing particle points
+    // 2. Glowing Gradient Core Texture (Cyan-to-white radial gradient with soft falloff)
+    const createGlowingCoreTexture = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const radGrad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        radGrad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        radGrad.addColorStop(0.2, 'rgba(207, 250, 254, 0.95)');
+        radGrad.addColorStop(0.45, 'rgba(56, 189, 248, 0.7)');
+        radGrad.addColorStop(0.7, 'rgba(0, 240, 255, 0.25)');
+        radGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = radGrad;
+        ctx.fillRect(0, 0, 128, 128);
+      }
+      return new THREE.CanvasTexture(canvas);
+    };
+
+    const coreTexture = createGlowingCoreTexture();
+
+    // Secondary soft bloom texture for outer halo
+    const createBloomTexture = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const radGrad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        radGrad.addColorStop(0, 'rgba(0, 240, 255, 0.6)');
+        radGrad.addColorStop(0.4, 'rgba(0, 168, 255, 0.25)');
+        radGrad.addColorStop(0.8, 'rgba(2, 132, 199, 0.08)');
+        radGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = radGrad;
+        ctx.fillRect(0, 0, 128, 128);
+      }
+      return new THREE.CanvasTexture(canvas);
+    };
+
+    const bloomTexture = createBloomTexture();
+
+    // 3. Glowing Gradient Core Sprite (Replaces flat opaque white disc)
+    const coreMat = new THREE.SpriteMaterial({
+      map: coreTexture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      color: 0xffffff,
+    });
+    const coreSprite = new THREE.Sprite(coreMat);
+    coreSprite.scale.set(1.4, 1.4, 1);
+    scene.add(coreSprite);
+
+    // Volumetric Outer Bloom Sprite
+    const bloomMat = new THREE.SpriteMaterial({
+      map: bloomTexture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      color: STATE_COLORS.idle.clone(),
+    });
+    const bloomSprite = new THREE.Sprite(bloomMat);
+    bloomSprite.scale.set(2.4, 2.4, 1);
+    scene.add(bloomSprite);
+
+    // 4. Holographic Particle Shell (Spherical Fibonacci distribution)
     const createParticleTexture = () => {
       const canvas = document.createElement('canvas');
       canvas.width = 64;
@@ -79,8 +144,8 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
       if (ctx) {
         const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
         gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        gradient.addColorStop(0.3, 'rgba(0, 240, 255, 0.8)');
-        gradient.addColorStop(0.7, 'rgba(0, 160, 255, 0.25)');
+        gradient.addColorStop(0.3, 'rgba(0, 240, 255, 0.85)');
+        gradient.addColorStop(0.7, 'rgba(0, 160, 255, 0.2)');
         gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 64, 64);
@@ -89,19 +154,16 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
     };
 
     const particleTexture = createParticleTexture();
-
-    // 3. Holographic Particle Sphere
-    const particleCount = isBatterySaver ? 800 : 1600;
-    const sphereRadius = 1.6;
+    const particleCount = isBatterySaver ? 700 : 1400;
+    const sphereRadius = 1.35; // Proportioned to prevent overlapping bottom labels
     const basePositions = new Float32Array(particleCount * 3);
     const currentPositions = new Float32Array(particleCount * 3);
 
-    // Uniform distribution on sphere using Fibonacci sphere algorithm
-    const phi = Math.PI * (Math.sqrt(5) - 1); // Golden angle
+    const goldenAngle = Math.PI * (Math.sqrt(5) - 1);
     for (let i = 0; i < particleCount; i++) {
-      const y = 1 - (i / (particleCount - 1)) * 2; // y goes from 1 to -1
+      const y = 1 - (i / (particleCount - 1)) * 2;
       const radiusAtY = Math.sqrt(1 - y * y);
-      const theta = phi * i;
+      const theta = goldenAngle * i;
 
       const x = Math.cos(theta) * radiusAtY;
       const z = Math.sin(theta) * radiusAtY;
@@ -122,7 +184,7 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
     );
 
     const particlesMaterial = new THREE.PointsMaterial({
-      size: isBatterySaver ? 0.08 : 0.065,
+      size: isBatterySaver ? 0.075 : 0.06,
       map: particleTexture,
       transparent: true,
       blending: THREE.AdditiveBlending,
@@ -133,32 +195,9 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
     const particlesMesh = new THREE.Points(particlesGeometry, particlesMaterial);
     scene.add(particlesMesh);
 
-    // 4. Bright Inner Core Orb
-    const coreGeo = new THREE.SphereGeometry(0.65, 32, 32);
-    const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.85,
-      blending: THREE.AdditiveBlending,
-    });
-    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
-    scene.add(coreMesh);
-
-    // Soft volumetric halo
-    const haloGeo = new THREE.SphereGeometry(1.0, 32, 32);
-    const haloMat = new THREE.MeshBasicMaterial({
-      color: STATE_COLORS.idle.clone(),
-      transparent: true,
-      opacity: 0.22,
-      blending: THREE.AdditiveBlending,
-      side: THREE.BackSide,
-    });
-    const haloMesh = new THREE.Mesh(haloGeo, haloMat);
-    scene.add(haloMesh);
-
-    // 5. Layered Energy Orbit Rings
+    // 5. Layered Concentric Energy Orbit Rings
     const createRing = (radius: number, tube: number, tiltX: number, tiltY: number) => {
-      const ringGeo = new THREE.TorusGeometry(radius, tube, 16, 80);
+      const ringGeo = new THREE.TorusGeometry(radius, tube, 16, 72);
       const ringMat = new THREE.MeshBasicMaterial({
         color: STATE_COLORS.idle.clone(),
         transparent: true,
@@ -171,16 +210,14 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
       return { mesh: ringMesh, material: ringMat, baseTiltX: tiltX, baseTiltY: tiltY };
     };
 
-    const ring1 = createRing(2.1, 0.014, Math.PI / 2.8, 0.2);
-    const ring2 = createRing(2.35, 0.01, -Math.PI / 3.2, -0.4);
-    const ring3 = createRing(1.85, 0.012, 0.3, Math.PI / 3);
+    const ring1 = createRing(1.72, 0.012, Math.PI / 2.7, 0.18);
+    const ring2 = createRing(1.95, 0.009, -Math.PI / 3.1, -0.35);
 
     scene.add(ring1.mesh);
     scene.add(ring2.mesh);
-    scene.add(ring3.mesh);
 
     // Shockwave ring for 'completed' state
-    const shockwaveGeo = new THREE.RingGeometry(0.1, 0.16, 64);
+    const shockwaveGeo = new THREE.RingGeometry(0.1, 0.15, 64);
     const shockwaveMat = new THREE.MeshBasicMaterial({
       color: 0x22c55e,
       transparent: true,
@@ -192,9 +229,9 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
     shockwaveMesh.rotation.x = Math.PI / 2;
     scene.add(shockwaveMesh);
 
-    // Animation Loop Variables
+    // 6. Animation Loop
     let animationFrameId: number;
-    let clock = new THREE.Clock();
+    const clock = new THREE.Clock();
     let shockwaveScale = 0;
     let lastRenderTime = 0;
     const targetFpsInterval = isBatterySaver ? 1000 / 30 : 0;
@@ -203,10 +240,8 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
     const animate = (timestamp: number) => {
       animationFrameId = requestAnimationFrame(animate);
 
-      // Pause rendering when tab is hidden
       if (document.hidden) return;
 
-      // Throttle for battery saver mode (30 fps)
       if (targetFpsInterval > 0) {
         const elapsed = timestamp - lastRenderTime;
         if (elapsed < targetFpsInterval) return;
@@ -217,21 +252,39 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
       const currentState = stateRef.current;
       const currentAudio = audioLevelRef.current || 0;
 
-      // 1. Smoothly interpolate colors to target state color
+      // Color interpolation
       const targetColor = STATE_COLORS[currentState] || STATE_COLORS.idle;
       currentColor.lerp(targetColor, 0.06);
 
       particlesMaterial.color.copy(currentColor);
-      haloMat.color.copy(currentColor);
+      bloomMat.color.copy(currentColor);
       ring1.material.color.copy(currentColor);
       ring2.material.color.copy(currentColor);
-      ring3.material.color.copy(currentColor);
 
-      // 2. Audio reactivity & Surface Noise Displacement
+      // Core Sprite gentle pulse & audio reaction
+      const corePulse =
+        1.35 +
+        Math.sin(elapsedTime * 2.2) * 0.08 +
+        (currentState === 'speaking' || currentState === 'listening' ? currentAudio * 0.5 : 0);
+      coreSprite.scale.set(corePulse, corePulse, 1);
+
+      const bloomPulse =
+        2.3 +
+        Math.sin(elapsedTime * 1.8) * 0.12 +
+        (currentState === 'speaking' || currentState === 'listening' ? currentAudio * 0.8 : 0);
+      bloomSprite.scale.set(bloomPulse, bloomPulse, 1);
+
+      // Error jitter / opacity
+      if (currentState === 'error') {
+        coreMat.opacity = Math.random() > 0.4 ? 0.95 : 0.4;
+      } else {
+        coreMat.opacity = 0.92;
+      }
+
+      // Audio reactive noise displacement on particle shell
       const posAttr = particlesGeometry.attributes.position as THREE.BufferAttribute;
       const positions = posAttr.array as Float32Array;
 
-      // Compute ripple displacement
       const audioMultiplier =
         currentState === 'listening'
           ? Math.max(0.08, currentAudio * 1.8)
@@ -250,7 +303,6 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
         const by = basePositions[idx + 1];
         const bz = basePositions[idx + 2];
 
-        // 3D procedural noise simulation via trigonometric harmonics
         const noise =
           Math.sin(bx * 2.5 + timeFactor) *
           Math.cos(by * 2.5 + timeFactor * 0.8) *
@@ -258,7 +310,6 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
 
         let displacement = 1.0 + noise * audioMultiplier;
 
-        // Extra jitter on error state
         if (currentState === 'error') {
           displacement += (Math.random() - 0.5) * 0.12;
         }
@@ -269,52 +320,36 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
       }
       posAttr.needsUpdate = true;
 
-      // 3. Rotations per State
+      // Energy Ring rotations
       if (!prefersReducedMotion) {
         if (currentState === 'idle') {
-          // Slow breathing glow, near-still
-          particlesMesh.rotation.y = elapsedTime * 0.03;
-          ring1.mesh.rotation.z = elapsedTime * 0.04;
-          ring2.mesh.rotation.z = -elapsedTime * 0.03;
+          particlesMesh.rotation.y = elapsedTime * 0.025;
+          ring1.mesh.rotation.z = elapsedTime * 0.035;
+          ring2.mesh.rotation.z = -elapsedTime * 0.028;
         } else if (currentState === 'thinking' || currentState === 'reasoning') {
-          // Swirling particles inside and tilting rings
-          particlesMesh.rotation.y += 0.022;
-          particlesMesh.rotation.x = Math.sin(elapsedTime * 0.8) * 0.25;
-          ring1.mesh.rotation.z += 0.035;
-          ring2.mesh.rotation.z -= 0.028;
-          ring1.mesh.rotation.x = ring1.baseTiltX + Math.sin(elapsedTime * 1.2) * 0.25;
-          ring2.mesh.rotation.y = ring2.baseTiltY + Math.cos(elapsedTime * 1.2) * 0.25;
-        } else if (currentState === 'speaking') {
-          particlesMesh.rotation.y += 0.015;
-          ring1.mesh.rotation.z += 0.025;
+          particlesMesh.rotation.y += 0.02;
+          particlesMesh.rotation.x = Math.sin(elapsedTime * 0.8) * 0.2;
+          ring1.mesh.rotation.z += 0.03;
           ring2.mesh.rotation.z -= 0.025;
+          ring1.mesh.rotation.x = ring1.baseTiltX + Math.sin(elapsedTime * 1.2) * 0.22;
+          ring2.mesh.rotation.y = ring2.baseTiltY + Math.cos(elapsedTime * 1.2) * 0.22;
+        } else if (currentState === 'speaking') {
+          particlesMesh.rotation.y += 0.014;
+          ring1.mesh.rotation.z += 0.022;
+          ring2.mesh.rotation.z -= 0.022;
         } else {
           particlesMesh.rotation.y += 0.008;
-          ring1.mesh.rotation.z += 0.015;
-          ring2.mesh.rotation.z -= 0.015;
+          ring1.mesh.rotation.z += 0.014;
+          ring2.mesh.rotation.z -= 0.014;
         }
       }
 
-      // 4. Core Pulsing & Audio Reaction
-      const corePulse =
-        1.0 +
-        Math.sin(elapsedTime * 3) * 0.05 +
-        (currentState === 'speaking' || currentState === 'listening' ? currentAudio * 0.4 : 0);
-      coreMesh.scale.set(corePulse, corePulse, corePulse);
-
-      // Core opacity flicker on error
-      if (currentState === 'error') {
-        coreMat.opacity = Math.random() > 0.4 ? 0.9 : 0.3;
-      } else {
-        coreMat.opacity = 0.85;
-      }
-
-      // 5. Completed State Shockwave
+      // Completed Shockwave
       if (currentState === 'completed') {
         shockwaveScale += 0.05;
-        if (shockwaveScale > 3.0) shockwaveScale = 0.1;
+        if (shockwaveScale > 2.8) shockwaveScale = 0.1;
         shockwaveMesh.scale.set(shockwaveScale, shockwaveScale, shockwaveScale);
-        shockwaveMat.opacity = Math.max(0, 1.0 - shockwaveScale / 3.0);
+        shockwaveMat.opacity = Math.max(0, 1.0 - shockwaveScale / 2.8);
       } else {
         shockwaveScale = 0;
         shockwaveMat.opacity = 0;
@@ -325,7 +360,6 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
 
     animationFrameId = requestAnimationFrame(animate);
 
-    // Cleanup on unmount
     return () => {
       cancelAnimationFrame(animationFrameId);
       if (container && renderer.domElement) {
@@ -333,18 +367,16 @@ export const ThreeHolographicOrb: React.FC<ThreeHolographicOrbProps> = ({
       }
       particlesGeometry.dispose();
       particlesMaterial.dispose();
-      coreGeo.dispose();
       coreMat.dispose();
-      haloGeo.dispose();
-      haloMat.dispose();
+      bloomMat.dispose();
       ring1.mesh.geometry.dispose();
       ring1.material.dispose();
       ring2.mesh.geometry.dispose();
       ring2.material.dispose();
-      ring3.mesh.geometry.dispose();
-      ring3.material.dispose();
       shockwaveGeo.dispose();
       shockwaveMat.dispose();
+      coreTexture.dispose();
+      bloomTexture.dispose();
       particleTexture.dispose();
       renderer.dispose();
     };

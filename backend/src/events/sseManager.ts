@@ -8,7 +8,8 @@ export type EventType =
   | 'task'
   | 'memory'
   | 'health'
-  | 'message';
+  | 'message'
+  | 'activity';
 
 export interface SSEClient {
   id: string;

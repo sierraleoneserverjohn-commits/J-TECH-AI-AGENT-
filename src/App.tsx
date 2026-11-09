@@ -261,6 +261,7 @@ export default function App() {
               collapsedPanels={collapsedPanels}
               toggleCollapse={togglePanelCollapse}
               onOpenVision={() => setIsVisionOpen(true)}
+              onOpenSettings={() => setIsSettingsOpen(true)}
             />
           </div>
         </div>
